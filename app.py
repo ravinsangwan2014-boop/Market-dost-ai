@@ -1,9 +1,10 @@
 import os, time, requests, asyncio
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Query
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 import logging
+import httpx
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -23,6 +24,29 @@ TG_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 # Callback storage
 registered_callbacks: List[str] = []
 callback_history: List[dict] = []
+callback_state_lock = asyncio.Lock()
+
+
+async def _callbacks_snapshot() -> List[str]:
+    async with callback_state_lock:
+        return list(registered_callbacks)
+
+
+async def _has_callbacks() -> bool:
+    async with callback_state_lock:
+        return bool(registered_callbacks)
+
+
+async def _append_callback_result(result: dict) -> None:
+    async with callback_state_lock:
+        callback_history.append(result)
+
+
+async def _history_snapshot(limit: int) -> tuple[List[dict], int]:
+    async with callback_state_lock:
+        history = callback_history[-limit:] if limit else []
+        total = len(callback_history)
+    return history, total
 
 
 class CallbackRequest(BaseModel):
@@ -99,16 +123,34 @@ def score_from_change(xag=None, dxy=None, y10=None) -> dict:
 
 async def trigger_callbacks(event_type: str, payload: dict):
     """Trigger all registered callbacks for a given event type (non-blocking)"""
-    tasks = []
-    for callback_url in registered_callbacks:
-        task = asyncio.create_task(
-            invoke_callback(callback_url, event_type, payload)
+    callbacks = await _callbacks_snapshot()
+
+    if callbacks:
+        results = await asyncio.gather(
+            *(invoke_callback(callback_url, event_type, payload) for callback_url in callbacks),
+            return_exceptions=True
         )
-        tasks.append(task)
-    
-    if tasks:
-        results = await asyncio.gather(*tasks, return_exceptions=True)
         logger.info(f"Triggered {len(results)} callbacks for event: {event_type}")
+
+
+async def dispatch_callbacks_safely(event_type: str, payload: dict):
+    """Safely dispatch callbacks and log unexpected failures"""
+    try:
+        await trigger_callbacks(event_type, payload)
+    except Exception as e:
+        logger.error(f"Unexpected callback dispatch failure for {event_type}: {str(e)}")
+
+
+def schedule_callback_dispatch(event_type: str, payload: dict):
+    """Schedule callback dispatch from async request handlers"""
+    def consume_task_result(t):
+        try:
+            t.result()
+        except Exception as e:
+            logger.error(f"Background callback task failed for {event_type}: {str(e)}")
+
+    task = asyncio.create_task(dispatch_callbacks_safely(event_type, payload))
+    task.add_done_callback(consume_task_result)
 
 
 async def invoke_callback(url: str, event_type: str, payload: dict):
@@ -120,15 +162,16 @@ async def invoke_callback(url: str, event_type: str, payload: dict):
     }
     
     try:
-        response = requests.post(url, json=callback_payload, timeout=12)
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            response = await client.post(url, json=callback_payload, timeout=12.0)
         result = {
             "callback_url": url,
             "event": event_type,
             "status": response.status_code,
-            "success": response.ok,
+            "success": response.is_success,
             "timestamp": datetime.utcnow().isoformat()
         }
-        if response.ok:
+        if response.is_success:
             logger.info(f"Callback {url} executed successfully for {event_type}")
         else:
             logger.warning(f"Callback {url} returned status {response.status_code}")
@@ -143,7 +186,7 @@ async def invoke_callback(url: str, event_type: str, payload: dict):
         }
         logger.error(f"Callback {url} failed: {str(e)}")
     
-    callback_history.append(result)
+    await _append_callback_result(result)
     return result
 
 
@@ -194,44 +237,51 @@ def providers_status():
 # =====================
 
 @app.post("/callbacks/register")
-def register_callback(callback: CallbackRequest):
+async def register_callback(callback: CallbackRequest):
     """Register a callback URL for market events"""
-    if callback.url not in registered_callbacks:
-        registered_callbacks.append(callback.url)
-        logger.info(f"Callback registered: {callback.url}")
+    async with callback_state_lock:
+        if callback.url not in registered_callbacks:
+            registered_callbacks.append(callback.url)
+            logger.info(f"Callback registered: {callback.url}")
+        total_callbacks = len(registered_callbacks)
     return {
         "message": "Callback registered",
         "url": callback.url,
         "events": callback.events,
-        "total_callbacks": len(registered_callbacks)
+        "total_callbacks": total_callbacks
     }
 
 
 @app.post("/callbacks/unregister")
-def unregister_callback(url: str):
+async def unregister_callback(
+    url: str
+):
     """Unregister a callback URL"""
-    if url in registered_callbacks:
-        registered_callbacks.remove(url)
-        logger.info(f"Callback unregistered: {url}")
-        return {"message": "Callback unregistered", "url": url}
+    async with callback_state_lock:
+        if url in registered_callbacks:
+            registered_callbacks.remove(url)
+            logger.info(f"Callback unregistered: {url}")
+            return {"message": "Callback unregistered", "url": url}
     return {"message": "Callback not found", "url": url}
 
 
 @app.get("/callbacks/list")
-def list_callbacks():
+async def list_callbacks():
     """List all registered callbacks"""
+    callbacks = await _callbacks_snapshot()
     return {
-        "callbacks": registered_callbacks,
-        "total": len(registered_callbacks)
+        "callbacks": callbacks,
+        "total": len(callbacks)
     }
 
 
 @app.get("/callbacks/history")
-def get_callback_history(limit: int = 50):
+async def get_callback_history(limit: int = Query(50, ge=0)):
     """Get callback invocation history"""
+    history, total = await _history_snapshot(limit)
     return {
-        "history": callback_history[-limit:],
-        "total": len(callback_history)
+        "history": history,
+        "total": total
     }
 
 
@@ -240,7 +290,7 @@ def get_callback_history(limit: int = 50):
 # =====================
 
 @app.get("/silver")
-def silver():
+async def silver():
     """Get current silver price in USD and parity in INR per kg"""
     try:
         xag = td_price("XAG/USD")
@@ -255,12 +305,13 @@ def silver():
         parity = parity_inr_kg(xag, fx)
         
         # Trigger callbacks (non-blocking)
-        if registered_callbacks:
-            asyncio.create_task(trigger_callbacks("price_change", {
+        has_callbacks = await _has_callbacks()
+        if has_callbacks:
+            schedule_callback_dispatch("price_change", {
                 "xag_usd": xag,
                 "usd_inr": fx,
                 "indicative_inr_per_kg": round(parity, 2)
-            }))
+            })
         
         return {
             "confirmed": True,
@@ -279,7 +330,7 @@ def silver():
 
 
 @app.get("/mysilver")
-def my_silver():
+async def my_silver():
     """Get personal silver portfolio P&L"""
     try:
         xag = td_price("XAG/USD")
@@ -297,13 +348,14 @@ def my_silver():
         pnl = value - cost
         
         # Trigger callbacks (non-blocking)
-        if registered_callbacks:
-            asyncio.create_task(trigger_callbacks("pnl_change", {
+        has_callbacks = await _has_callbacks()
+        if has_callbacks:
+            schedule_callback_dispatch("pnl_change", {
                 "quantity_kg": SILVER_KG,
                 "cost_basis_inr": round(cost, 2),
                 "indicative_value_inr": round(value, 2),
                 "unrealised_pnl_inr": round(pnl, 2)
-            }))
+            })
         
         return {
             "confirmed": True,
@@ -324,14 +376,15 @@ def my_silver():
 
 
 @app.get("/score")
-def score():
+async def score():
     """Get current market score and bias"""
     try:
         score_data = score_from_change()
         
         # Trigger callbacks (non-blocking)
-        if registered_callbacks:
-            asyncio.create_task(trigger_callbacks("score_change", score_data))
+        has_callbacks = await _has_callbacks()
+        if has_callbacks:
+            schedule_callback_dispatch("score_change", score_data)
         
         return score_data
     except Exception as e:
@@ -367,21 +420,22 @@ async def telegram_webhook(request: Request):
             reply = "Market Dost AI commands: /silver /mysilver /score /status"
             
             if text == "/silver":
-                reply = str(silver())
+                reply = str(await silver())
             elif text == "/mysilver":
-                reply = str(my_silver())
+                reply = str(await my_silver())
             elif text == "/score":
-                reply = str(score())
+                reply = str(await score())
             elif text in ("/start", "/help"):
                 reply = "Namaste! Market Dost AI ready. Commands: /silver /mysilver /score /status"
             elif text == "/status":
                 reply = str(providers_status())
             
-            requests.post(
-                f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-                json={"chat_id": chat_id, "text": reply},
-                timeout=12
-            )
+            async with httpx.AsyncClient(timeout=12.0) as client:
+                await client.post(
+                    f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
+                    json={"chat_id": chat_id, "text": reply},
+                    timeout=12.0
+                )
         return {"ok": True}
     except Exception as e:
         logger.error(f"Error in telegram webhook: {str(e)}")
