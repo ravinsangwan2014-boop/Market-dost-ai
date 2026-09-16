@@ -1,5 +1,5 @@
 import os, time, requests, asyncio
-from fastapi import FastAPI, Request, Query, Body, HTTPException
+from fastapi import FastAPI, Request, Query
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
@@ -54,11 +54,6 @@ class CallbackRequest(BaseModel):
     url: str
     events: List[str] = ["price_change", "pnl_change", "score_change"]
     threshold: Optional[float] = None
-
-
-class CallbackUnregisterRequest(BaseModel):
-    """Request model for unregistering callbacks"""
-    url: str
 
 
 def configured(v: str) -> bool:
@@ -136,6 +131,26 @@ async def trigger_callbacks(event_type: str, payload: dict):
             return_exceptions=True
         )
         logger.info(f"Triggered {len(results)} callbacks for event: {event_type}")
+
+
+async def dispatch_callbacks_safely(event_type: str, payload: dict):
+    """Safely dispatch callbacks and log unexpected failures"""
+    try:
+        await trigger_callbacks(event_type, payload)
+    except Exception as e:
+        logger.error(f"Unexpected callback dispatch failure for {event_type}: {str(e)}")
+
+
+def schedule_callback_dispatch(event_type: str, payload: dict):
+    """Schedule callback dispatch from async request handlers"""
+    def consume_task_result(t):
+        try:
+            t.result()
+        except Exception as e:
+            logger.error(f"Background callback task failed for {event_type}: {str(e)}")
+
+    task = asyncio.create_task(dispatch_callbacks_safely(event_type, payload))
+    task.add_done_callback(consume_task_result)
 
 
 async def invoke_callback(url: str, event_type: str, payload: dict):
@@ -239,20 +254,15 @@ async def register_callback(callback: CallbackRequest):
 
 @app.post("/callbacks/unregister")
 async def unregister_callback(
-    callback: Optional[CallbackUnregisterRequest] = Body(default=None),
-    url: Optional[str] = Query(default=None)
+    url: str
 ):
     """Unregister a callback URL"""
-    callback_url = callback.url if callback else url
-    if not callback_url:
-        raise HTTPException(status_code=422, detail="url is required")
-
     async with callback_state_lock:
-        if callback_url in registered_callbacks:
-            registered_callbacks.remove(callback_url)
-            logger.info(f"Callback unregistered: {callback_url}")
-            return {"message": "Callback unregistered", "url": callback_url}
-    return {"message": "Callback not found", "url": callback_url}
+        if url in registered_callbacks:
+            registered_callbacks.remove(url)
+            logger.info(f"Callback unregistered: {url}")
+            return {"message": "Callback unregistered", "url": url}
+    return {"message": "Callback not found", "url": url}
 
 
 @app.get("/callbacks/list")
@@ -297,11 +307,11 @@ async def silver():
         # Trigger callbacks (non-blocking)
         has_callbacks = await _has_callbacks()
         if has_callbacks:
-            asyncio.create_task(trigger_callbacks("price_change", {
+            schedule_callback_dispatch("price_change", {
                 "xag_usd": xag,
                 "usd_inr": fx,
                 "indicative_inr_per_kg": round(parity, 2)
-            }))
+            })
         
         return {
             "confirmed": True,
@@ -340,12 +350,12 @@ async def my_silver():
         # Trigger callbacks (non-blocking)
         has_callbacks = await _has_callbacks()
         if has_callbacks:
-            asyncio.create_task(trigger_callbacks("pnl_change", {
+            schedule_callback_dispatch("pnl_change", {
                 "quantity_kg": SILVER_KG,
                 "cost_basis_inr": round(cost, 2),
                 "indicative_value_inr": round(value, 2),
                 "unrealised_pnl_inr": round(pnl, 2)
-            }))
+            })
         
         return {
             "confirmed": True,
@@ -374,7 +384,7 @@ async def score():
         # Trigger callbacks (non-blocking)
         has_callbacks = await _has_callbacks()
         if has_callbacks:
-            asyncio.create_task(trigger_callbacks("score_change", score_data))
+            schedule_callback_dispatch("score_change", score_data)
         
         return score_data
     except Exception as e:

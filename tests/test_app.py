@@ -82,14 +82,6 @@ class TestCallbackManagement:
         data = response.json()
         assert data["message"] == "Callback unregistered"
 
-    def test_unregister_callback_with_body(self):
-        test_url = "https://example.com/webhook-body"
-        client.post("/callbacks/register", json={"url": test_url})
-        response = client.post("/callbacks/unregister", json={"url": test_url})
-        assert response.status_code == 200
-        data = response.json()
-        assert data["message"] == "Callback unregistered"
-
     def test_callback_history(self):
         response = client.get("/callbacks/history")
         assert response.status_code == 200
