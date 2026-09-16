@@ -6,6 +6,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import worker
 
 
+class _FakeResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
 def _base_google_config():
     return {
         "calendar_mode": "google",
@@ -80,3 +91,44 @@ def test_parse_google_event_start_supports_all_day_date():
     assert start.year == 2026
     assert start.month == 12
     assert start.day == 25
+
+
+def test_fetch_google_calendar_uses_api_key(monkeypatch):
+    config = _base_google_config()
+    captured = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["params"] = params or {}
+        captured["headers"] = headers or {}
+        return _FakeResponse({"items": [{"id": "x"}]})
+
+    monkeypatch.setattr(worker.requests, "get", fake_get)
+
+    events = worker.fetch_google_calendar(config)
+
+    assert len(events) == 1
+    assert captured["params"]["key"] == "api-key"
+    assert "access_token" not in captured["params"]
+    assert "Authorization" not in captured["headers"]
+
+
+def test_fetch_google_calendar_skips_without_api_key_or_oauth(monkeypatch):
+    config = _base_google_config()
+    config["google_api_key"] = ""
+    config["google_client_id"] = ""
+    config["google_client_secret"] = ""
+    config["google_refresh_token"] = ""
+
+    post_called = {"value": False}
+
+    def fake_post(*_args, **_kwargs):
+        post_called["value"] = True
+        return _FakeResponse({"access_token": "token"})
+
+    monkeypatch.setattr(worker.requests, "post", fake_post)
+
+    events = worker.fetch_google_calendar(config)
+
+    assert events == []
+    assert post_called["value"] is False

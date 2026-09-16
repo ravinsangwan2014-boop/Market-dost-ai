@@ -95,7 +95,8 @@ def fetch_google_calendar(config):
     calendar_id = config["google_calendar_id"] or "primary"
     now = datetime.now(timezone.utc)
     time_min = (now - timedelta(minutes=max(0, config["google_calendar_lookback_minutes"]))).isoformat()
-    time_max = (now + timedelta(minutes=max(1, config["google_calendar_lookahead_minutes"]))).isoformat()
+    fetch_window_minutes = max(1, config["google_calendar_lookahead_minutes"], config["google_alert_lead_minutes"])
+    time_max = (now + timedelta(minutes=fetch_window_minutes)).isoformat()
 
     params = {
         "singleEvents": "true",
