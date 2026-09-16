@@ -1,5 +1,8 @@
-import os, time, requests
+import os, time, requests, asyncio
 from fastapi import FastAPI, Request
+from pydantic import BaseModel
+from typing import List, Optional
+from datetime import datetime
 
 app = FastAPI(title="Market Dost AI", version="2.0.0")
 
@@ -10,6 +13,17 @@ TD_KEY = os.getenv("TWELVE_DATA_API_KEY", "")
 TE_KEY = os.getenv("TRADING_ECONOMICS_API_KEY", "")
 TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
+
+# Callback storage
+registered_callbacks: List[str] = []
+callback_history: List[dict] = []
+
+
+class CallbackRequest(BaseModel):
+    """Request model for registering callbacks"""
+    url: str
+    events: List[str] = ["price_change", "pnl_change", "score_change"]
+    threshold: Optional[float] = None
 
 
 def configured(v: str) -> bool:
@@ -51,6 +65,50 @@ def score_from_change(xag=None, dxy=None, y10=None):
     return {"score": score, "bias": "Neutral", "confidence": confidence, "reasons": reasons}
 
 
+async def trigger_callbacks(event_type: str, payload: dict):
+    """Trigger all registered callbacks for a given event type"""
+    tasks = []
+    for callback_url in registered_callbacks:
+        task = asyncio.create_task(
+            invoke_callback(callback_url, event_type, payload)
+        )
+        tasks.append(task)
+    
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def invoke_callback(url: str, event_type: str, payload: dict):
+    """Invoke a single callback URL with retry logic"""
+    callback_payload = {
+        "event": event_type,
+        "timestamp": datetime.utcnow().isoformat(),
+        "data": payload
+    }
+    
+    try:
+        response = requests.post(url, json=callback_payload, timeout=12)
+        result = {
+            "callback_url": url,
+            "event": event_type,
+            "status": response.status_code,
+            "success": response.ok,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        result = {
+            "callback_url": url,
+            "event": event_type,
+            "status": "error",
+            "success": False,
+            "error": type(e).__name__,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    
+    callback_history.append(result)
+    return result
+
+
 @app.get("/")
 def root():
     return {"name": "Market Dost AI", "version": "2.0.0", "status": "running"}
@@ -81,6 +139,46 @@ def providers_status():
     }
 
 
+@app.post("/callbacks/register")
+def register_callback(callback: CallbackRequest):
+    """Register a callback URL for market events"""
+    if callback.url not in registered_callbacks:
+        registered_callbacks.append(callback.url)
+    return {
+        "message": "Callback registered",
+        "url": callback.url,
+        "events": callback.events,
+        "total_callbacks": len(registered_callbacks)
+    }
+
+
+@app.post("/callbacks/unregister")
+def unregister_callback(url: str):
+    """Unregister a callback URL"""
+    if url in registered_callbacks:
+        registered_callbacks.remove(url)
+        return {"message": "Callback unregistered", "url": url}
+    return {"message": "Callback not found", "url": url}
+
+
+@app.get("/callbacks/list")
+def list_callbacks():
+    """List all registered callbacks"""
+    return {
+        "callbacks": registered_callbacks,
+        "total": len(registered_callbacks)
+    }
+
+
+@app.get("/callbacks/history")
+def get_callback_history(limit: int = 50):
+    """Get callback invocation history"""
+    return {
+        "history": callback_history[-limit:],
+        "total": len(callback_history)
+    }
+
+
 @app.get("/silver")
 def silver():
     try:
@@ -89,6 +187,15 @@ def silver():
         if xag is None or fx is None:
             return {"confirmed": False, "message": "DATA NOT CONFIRMED", "xag_usd": xag, "usd_inr": fx}
         parity = parity_inr_kg(xag, fx)
+        
+        # Trigger callbacks
+        if registered_callbacks:
+            asyncio.create_task(trigger_callbacks("price_change", {
+                "xag_usd": xag,
+                "usd_inr": fx,
+                "indicative_inr_per_kg": round(parity, 2)
+            }))
+        
         return {"confirmed": True, "xag_usd": xag, "usd_inr": fx, "indicative_inr_per_kg": round(parity, 2), "note": "Indicative international parity; not MCX/retail physical price."}
     except Exception as e:
         return {"confirmed": False, "message": "DATA NOT CONFIRMED", "error": type(e).__name__}
@@ -105,14 +212,30 @@ def my_silver():
         cost = SILVER_KG * AVG_COST
         value = SILVER_KG * px
         pnl = value - cost
-        return {"confirmed": True, "quantity_kg": SILVER_KG, "avg_cost_inr_per_kg": AVG_COST, "cost_basis_inr": round(cost,2), "indicative_value_inr": round(value,2), "unrealised_pnl_inr": round(pnl,2), "unrealised_pnl_pct": round((pnl/cost)*100,2), "pricing_note": "Uses international parity, not local dealer/MCX execution price."}
+        
+        # Trigger callbacks
+        if registered_callbacks:
+            asyncio.create_task(trigger_callbacks("pnl_change", {
+                "quantity_kg": SILVER_KG,
+                "cost_basis_inr": round(cost, 2),
+                "indicative_value_inr": round(value, 2),
+                "unrealised_pnl_inr": round(pnl, 2)
+            }))
+        
+        return {"confirmed": True, "quantity_kg": SILVER_KG, "avg_cost_inr_per_kg": AVG_COST, "cost_basis_inr": round(cost,2), "indicative_value_inr": round(value,2), "unrealised_pnl_inr": round(pnl,2)}
     except Exception as e:
         return {"confirmed": False, "message": "DATA NOT CONFIRMED", "error": type(e).__name__}
 
 
 @app.get("/score")
 def score():
-    return score_from_change()
+    score_data = score_from_change()
+    
+    # Trigger callbacks
+    if registered_callbacks:
+        asyncio.create_task(trigger_callbacks("score_change", score_data))
+    
+    return score_data
 
 
 @app.post("/telegram/test")
