@@ -25,7 +25,7 @@ TG_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 registered_callbacks: List[str] = []
 callback_history: List[dict] = []
 callback_state_lock = asyncio.Lock()
-callback_state_thread_lock = threading.Lock()
+callback_history_lock = threading.Lock()
 
 
 class CallbackRequest(BaseModel):
@@ -157,10 +157,10 @@ async def invoke_callback(
         logger.error(f"Callback {url} failed: {str(e)}")
     
     if use_async_state_lock:
-        async with callback_state_lock:
+        with callback_history_lock:
             callback_history.append(result)
     else:
-        with callback_state_thread_lock:
+        with callback_history_lock:
             callback_history.append(result)
     return result
 
@@ -185,7 +185,8 @@ def _run_callback_dispatch(event_type: str, payload: dict, callback_urls: List[s
 
 def schedule_callback_dispatch(event_type: str, payload: dict, callback_urls: Optional[List[str]] = None):
     """Schedule callback dispatch with event-loop fallback."""
-    callback_urls = callback_urls or []
+    if callback_urls is None:
+        callback_urls = list(registered_callbacks)
     if not callback_urls:
         return
 
@@ -292,7 +293,7 @@ async def list_callbacks():
 @app.get("/callbacks/history")
 async def get_callback_history(limit: int = 50):
     """Get callback invocation history"""
-    async with callback_state_lock:
+    with callback_history_lock:
         history = callback_history[-limit:]
         total = len(callback_history)
     return {
