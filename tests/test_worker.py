@@ -53,3 +53,19 @@ def test_poll_google_skips_event_outside_alert_window(monkeypatch):
     assert result["events_fetched"] == 1
     assert result["alerts_sent"] == 0
     assert result["skipped_outside_alert_window"] == 1
+
+
+def test_poll_google_deduplicates_same_event(monkeypatch):
+    worker.seen.clear()
+    config = _base_google_config()
+    start = (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+    events = [{"id": "test-3", "status": "confirmed", "updated": "2026-01-01T00:00:00Z", "summary": "Duplicate Event", "start": {"dateTime": start}}]
+    monkeypatch.setattr(worker, "fetch_google_calendar", lambda _cfg: events)
+    monkeypatch.setattr(worker, "send", lambda _text, _cfg: True)
+
+    first = worker.poll_google(config)
+    second = worker.poll_google(config)
+
+    assert first["alerts_sent"] == 1
+    assert second["alerts_sent"] == 0
+    assert second["skipped_seen"] == 1

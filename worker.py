@@ -119,7 +119,7 @@ def fetch_google_calendar(config):
                 flush=True,
             )
             return []
-        params["access_token"] = access_token
+        headers["Authorization"] = "Bearer " + access_token
         auth_mode = "oauth_refresh_token"
 
     url = f"https://www.googleapis.com/calendar/v3/calendars/{requests.utils.quote(calendar_id, safe='')}/events"
@@ -161,7 +161,9 @@ def trading_economics_event_id(event):
 
 
 def google_event_id(event):
-    raw = "|".join(str(event.get(k, "")) for k in ("id", "status", "updated"))
+    start = parse_google_event_start(event)
+    start_key = start.isoformat() if start else ""
+    raw = str(event.get("id", "")) + "|" + start_key
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
