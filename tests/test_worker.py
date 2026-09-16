@@ -1,0 +1,52 @@
+from datetime import datetime, timedelta, timezone
+
+import worker
+
+
+def _base_google_config():
+    return {
+        "calendar_mode": "google",
+        "interval_seconds": 120,
+        "min_importance": 2,
+        "telegram_bot_token": "token",
+        "telegram_chat_id": "chat",
+        "trading_economics_api_key": "",
+        "google_calendar_id": "primary",
+        "google_api_key": "api-key",
+        "google_client_id": "",
+        "google_client_secret": "",
+        "google_refresh_token": "",
+        "google_alert_lead_minutes": 30,
+        "google_calendar_lookback_minutes": 15,
+        "google_calendar_lookahead_minutes": 180,
+        "telegram_dry_run": False,
+    }
+
+
+def test_poll_google_sends_alert_for_event_in_window(monkeypatch):
+    worker.seen.clear()
+    config = _base_google_config()
+    start = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    events = [{"id": "test-1", "status": "confirmed", "updated": "2026-01-01T00:00:00Z", "summary": "Test Event", "start": {"dateTime": start}}]
+    monkeypatch.setattr(worker, "fetch_google_calendar", lambda _cfg: events)
+    monkeypatch.setattr(worker, "send", lambda _text, _cfg: True)
+
+    result = worker.poll_google(config)
+
+    assert result["events_fetched"] == 1
+    assert result["alerts_sent"] == 1
+
+
+def test_poll_google_skips_event_outside_alert_window(monkeypatch):
+    worker.seen.clear()
+    config = _base_google_config()
+    start = (datetime.now(timezone.utc) + timedelta(minutes=120)).isoformat().replace("+00:00", "Z")
+    events = [{"id": "test-2", "status": "confirmed", "updated": "2026-01-01T00:00:00Z", "summary": "Far Event", "start": {"dateTime": start}}]
+    monkeypatch.setattr(worker, "fetch_google_calendar", lambda _cfg: events)
+    monkeypatch.setattr(worker, "send", lambda _text, _cfg: True)
+
+    result = worker.poll_google(config)
+
+    assert result["events_fetched"] == 1
+    assert result["alerts_sent"] == 0
+    assert result["skipped_outside_alert_window"] == 1

@@ -91,6 +91,21 @@ TELEGRAM_CHAT_ID=your_chat_id
 TIMEZONE=Asia/Kolkata
 WATCHER_INTERVAL_MINUTES=5
 ECONOMIC_CALENDAR_MIN_IMPORTANCE=2
+CALENDAR_MODE=trading_economics
+
+# Google Calendar (required when CALENDAR_MODE=google)
+GOOGLE_CALENDAR_ID=primary
+GOOGLE_CALENDAR_ALERT_LEAD_MINUTES=30
+GOOGLE_CALENDAR_LOOKBACK_MINUTES=15
+GOOGLE_CALENDAR_LOOKAHEAD_MINUTES=180
+
+# Choose one auth method for Google Calendar:
+# A) Public calendar
+GOOGLE_API_KEY=
+# B) Private calendar (OAuth refresh token)
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REFRESH_TOKEN=
 ```
 
 ## Usage Examples
@@ -166,6 +181,7 @@ When a callback is triggered, your endpoint receives:
 
 ### Worker Service (Optional)
 - Background economic calendar monitoring
+- Supports `CALENDAR_MODE=trading_economics` and `CALENDAR_MODE=google`
 - Automatic Telegram alerts
 - Configurable polling interval
 
