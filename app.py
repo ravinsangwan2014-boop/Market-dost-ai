@@ -148,10 +148,14 @@ async def invoke_callback(
             "timestamp": datetime.utcnow().isoformat()
         }
         logger.error(f"Callback {url} failed: {str(e)}")
-    
+
+    record_callback_result(result)
+    return result
+
+
+def record_callback_result(result: dict):
     with callback_history_lock:
         callback_history.append(result)
-    return result
 
 
 async def _dispatch_callbacks_without_loop_lock(event_type: str, payload: dict, callback_urls: List[str]):
@@ -162,16 +166,16 @@ async def _dispatch_callbacks_without_loop_lock(event_type: str, payload: dict, 
         normalized_results = []
         for callback_url, result in zip(callback_urls, results):
             if isinstance(result, Exception):
-                normalized_results.append(
-                    {
-                        "callback_url": callback_url,
-                        "event": event_type,
-                        "status": "error",
-                        "success": False,
-                        "error": type(result).__name__,
-                        "timestamp": datetime.utcnow().isoformat(),
-                    }
-                )
+                synthesized_result = {
+                    "callback_url": callback_url,
+                    "event": event_type,
+                    "status": "error",
+                    "success": False,
+                    "error": type(result).__name__,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+                record_callback_result(synthesized_result)
+                normalized_results.append(synthesized_result)
             else:
                 normalized_results.append(result)
         return normalized_results

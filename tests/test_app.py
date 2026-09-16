@@ -386,6 +386,7 @@ class TestAsyncScheduling:
         assert results[0]["status"] == "error"
         assert results[0]["success"] is False
         assert results[0]["error"] == "RuntimeError"
+        assert callback_history[0]["error"] == "RuntimeError"
 
     def test_schedule_callback_dispatch_without_running_loop(self, monkeypatch):
         seen = {}
