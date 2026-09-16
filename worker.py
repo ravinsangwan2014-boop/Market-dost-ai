@@ -16,6 +16,7 @@ def env_int(name, default):
     try:
         return int(os.getenv(name, str(default)))
     except ValueError:
+        print({"config_parse_warning": name, "fallback_default": default}, flush=True)
         return default
 
 
@@ -156,6 +157,11 @@ def parse_google_event_start(event):
     return None
 
 
+def is_google_all_day_event(event):
+    start = event.get("start") or {}
+    return configured(start.get("date")) and not configured(start.get("dateTime"))
+
+
 def trading_economics_event_id(event):
     raw = "|".join(str(event.get(k, "")) for k in ("Date", "Event", "Actual", "Forecast", "Previous"))
     return hashlib.sha256(raw.encode()).hexdigest()
@@ -237,6 +243,7 @@ def poll_google(config):
     alerts = 0
     evaluated = 0
     skipped_cancelled = 0
+    skipped_all_day = 0
     skipped_invalid_start = 0
     skipped_outside_alert_window = 0
     skipped_seen = 0
@@ -250,6 +257,9 @@ def poll_google(config):
         status = (event.get("status") or "").lower()
         if status == "cancelled":
             skipped_cancelled += 1
+            continue
+        if is_google_all_day_event(event):
+            skipped_all_day += 1
             continue
         start_at = parse_google_event_start(event)
         if not start_at:
@@ -271,6 +281,7 @@ def poll_google(config):
         "events_fetched": len(events),
         "events_evaluated": evaluated,
         "skipped_cancelled": skipped_cancelled,
+        "skipped_all_day": skipped_all_day,
         "skipped_invalid_start": skipped_invalid_start,
         "skipped_outside_alert_window": skipped_outside_alert_window,
         "skipped_seen": skipped_seen,

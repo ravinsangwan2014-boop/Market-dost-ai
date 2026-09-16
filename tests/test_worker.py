@@ -93,6 +93,19 @@ def test_parse_google_event_start_supports_all_day_date():
     assert start.day == 25
 
 
+def test_poll_google_skips_all_day_events(monkeypatch):
+    worker.seen.clear()
+    config = _base_google_config()
+    events = [{"id": "test-4", "status": "confirmed", "summary": "Holiday", "start": {"date": "2026-12-25"}}]
+    monkeypatch.setattr(worker, "fetch_google_calendar", lambda _cfg: events)
+    monkeypatch.setattr(worker, "send", lambda _text, _cfg: True)
+
+    result = worker.poll_google(config)
+
+    assert result["alerts_sent"] == 0
+    assert result["skipped_all_day"] == 1
+
+
 def test_fetch_google_calendar_uses_api_key(monkeypatch):
     config = _base_google_config()
     captured = {}
