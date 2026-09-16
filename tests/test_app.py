@@ -208,6 +208,33 @@ class TestTelegramEndpoints:
         assert sent_payload["chat_id"] == 12345
         assert "xag_usd" in sent_payload["text"]
 
+    def test_telegram_webhook_returns_error_on_async_post_failure(self, monkeypatch):
+        class FailingAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, url, json):
+                raise RuntimeError("send failed")
+
+        monkeypatch.setattr(app_module, "TG_TOKEN", "token")
+        monkeypatch.setattr(
+            app_module.httpx,
+            "AsyncClient",
+            lambda *args, **kwargs: FailingAsyncClient(),
+        )
+
+        response = client.post(
+            "/telegram/webhook",
+            json={"message": {"text": "/status", "chat": {"id": 12345}}},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is False
+        assert "send failed" in data["error"]
+
 
 class TestErrorHandling:
     """Test error handling"""
@@ -258,7 +285,8 @@ class TestAsyncScheduling:
     def test_schedule_callback_dispatch_without_running_loop(self, monkeypatch):
         seen = {}
 
-        async def fake_trigger_callbacks(event_type, payload):
+        async def fake_invoke_callback(url, event_type, payload, use_async_state_lock=True):
+            seen["url"] = url
             seen["event_type"] = event_type
             seen["payload"] = payload
 
@@ -271,11 +299,13 @@ class TestAsyncScheduling:
             def start(self):
                 self._target(*self._args)
 
-        monkeypatch.setattr(app_module, "trigger_callbacks", fake_trigger_callbacks)
+        monkeypatch.setattr(app_module, "invoke_callback", fake_invoke_callback)
         monkeypatch.setattr(app_module.threading, "Thread", DummyThread)
+        registered_callbacks.append("https://example.com/webhook")
 
         app_module.schedule_callback_dispatch("price_change", {"xag_usd": 30.0})
 
+        assert seen["url"] == "https://example.com/webhook"
         assert seen["event_type"] == "price_change"
         assert seen["payload"]["xag_usd"] == 30.0
 

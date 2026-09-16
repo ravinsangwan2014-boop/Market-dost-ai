@@ -25,6 +25,7 @@ TG_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 registered_callbacks: List[str] = []
 callback_history: List[dict] = []
 callback_state_lock = asyncio.Lock()
+callback_state_thread_lock = threading.Lock()
 
 
 class CallbackRequest(BaseModel):
@@ -102,7 +103,8 @@ def score_from_change(xag=None, dxy=None, y10=None) -> dict:
 async def trigger_callbacks(event_type: str, payload: dict):
     """Trigger all registered callbacks for a given event type (non-blocking)"""
     async with callback_state_lock:
-        callback_urls = list(registered_callbacks)
+        with callback_state_thread_lock:
+            callback_urls = list(registered_callbacks)
 
     tasks = []
     for callback_url in callback_urls:
@@ -116,7 +118,12 @@ async def trigger_callbacks(event_type: str, payload: dict):
         logger.info(f"Triggered {len(results)} callbacks for event: {event_type}")
 
 
-async def invoke_callback(url: str, event_type: str, payload: dict):
+async def invoke_callback(
+    url: str,
+    event_type: str,
+    payload: dict,
+    use_async_state_lock: bool = True
+):
     """Invoke a single callback URL"""
     callback_payload = {
         "event": event_type,
@@ -149,14 +156,32 @@ async def invoke_callback(url: str, event_type: str, payload: dict):
         }
         logger.error(f"Callback {url} failed: {str(e)}")
     
-    async with callback_state_lock:
-        callback_history.append(result)
+    if use_async_state_lock:
+        async with callback_state_lock:
+            with callback_state_thread_lock:
+                callback_history.append(result)
+    else:
+        with callback_state_thread_lock:
+            callback_history.append(result)
     return result
 
 
-def _run_callback_dispatch(event_type: str, payload: dict):
+async def _dispatch_callbacks_without_loop_lock(event_type: str, payload: dict, callback_urls: List[str]):
+    """Dispatch callbacks without touching event-loop-bound locks."""
+    tasks = []
+    for callback_url in callback_urls:
+        tasks.append(
+            asyncio.create_task(
+                invoke_callback(callback_url, event_type, payload, use_async_state_lock=False)
+            )
+        )
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _run_callback_dispatch(event_type: str, payload: dict, callback_urls: List[str]):
     """Run callback dispatch in a dedicated event loop."""
-    asyncio.run(trigger_callbacks(event_type, payload))
+    asyncio.run(_dispatch_callbacks_without_loop_lock(event_type, payload, callback_urls))
 
 
 def schedule_callback_dispatch(event_type: str, payload: dict):
@@ -168,9 +193,14 @@ def schedule_callback_dispatch(event_type: str, payload: dict):
     except RuntimeError:
         pass
 
+    with callback_state_thread_lock:
+        callback_urls = list(registered_callbacks)
+    if not callback_urls:
+        return
+
     thread = threading.Thread(
         target=_run_callback_dispatch,
-        args=(event_type, payload),
+        args=(event_type, payload, callback_urls),
         daemon=True
     )
     thread.start()
@@ -226,10 +256,11 @@ def providers_status():
 async def register_callback(callback: CallbackRequest):
     """Register a callback URL for market events"""
     async with callback_state_lock:
-        if callback.url not in registered_callbacks:
-            registered_callbacks.append(callback.url)
-            logger.info(f"Callback registered: {callback.url}")
-        total_callbacks = len(registered_callbacks)
+        with callback_state_thread_lock:
+            if callback.url not in registered_callbacks:
+                registered_callbacks.append(callback.url)
+                logger.info(f"Callback registered: {callback.url}")
+            total_callbacks = len(registered_callbacks)
     return {
         "message": "Callback registered",
         "url": callback.url,
@@ -242,10 +273,11 @@ async def register_callback(callback: CallbackRequest):
 async def unregister_callback(url: str):
     """Unregister a callback URL"""
     async with callback_state_lock:
-        if url in registered_callbacks:
-            registered_callbacks.remove(url)
-            logger.info(f"Callback unregistered: {url}")
-            return {"message": "Callback unregistered", "url": url}
+        with callback_state_thread_lock:
+            if url in registered_callbacks:
+                registered_callbacks.remove(url)
+                logger.info(f"Callback unregistered: {url}")
+                return {"message": "Callback unregistered", "url": url}
     return {"message": "Callback not found", "url": url}
 
 
@@ -253,8 +285,9 @@ async def unregister_callback(url: str):
 async def list_callbacks():
     """List all registered callbacks"""
     async with callback_state_lock:
-        callbacks = list(registered_callbacks)
-        total = len(registered_callbacks)
+        with callback_state_thread_lock:
+            callbacks = list(registered_callbacks)
+            total = len(registered_callbacks)
     return {
         "callbacks": callbacks,
         "total": total
@@ -265,8 +298,9 @@ async def list_callbacks():
 async def get_callback_history(limit: int = 50):
     """Get callback invocation history"""
     async with callback_state_lock:
-        history = callback_history[-limit:]
-        total = len(callback_history)
+        with callback_state_thread_lock:
+            history = callback_history[-limit:]
+            total = len(callback_history)
     return {
         "history": history,
         "total": total
@@ -294,7 +328,8 @@ async def silver():
         
         # Trigger callbacks (non-blocking)
         async with callback_state_lock:
-            has_callbacks = bool(registered_callbacks)
+            with callback_state_thread_lock:
+                has_callbacks = bool(registered_callbacks)
         if has_callbacks:
             schedule_callback_dispatch("price_change", {
                 "xag_usd": xag,
@@ -338,7 +373,8 @@ async def my_silver():
         
         # Trigger callbacks (non-blocking)
         async with callback_state_lock:
-            has_callbacks = bool(registered_callbacks)
+            with callback_state_thread_lock:
+                has_callbacks = bool(registered_callbacks)
         if has_callbacks:
             schedule_callback_dispatch("pnl_change", {
                 "quantity_kg": SILVER_KG,
@@ -373,7 +409,8 @@ async def score():
         
         # Trigger callbacks (non-blocking)
         async with callback_state_lock:
-            has_callbacks = bool(registered_callbacks)
+            with callback_state_thread_lock:
+                has_callbacks = bool(registered_callbacks)
         if has_callbacks:
             schedule_callback_dispatch("score_change", score_data)
         
