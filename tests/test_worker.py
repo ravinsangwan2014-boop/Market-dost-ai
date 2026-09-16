@@ -174,7 +174,9 @@ def test_fetch_google_calendar_uses_oauth_when_api_key_missing(monkeypatch):
     events = worker.fetch_google_calendar(config)
 
     assert len(events) == 1
-    assert token_post["auth"] == ("cid", "csecret")
+    assert token_post["auth"] is None
+    assert token_post["data"]["client_id"] == "cid"
+    assert token_post["data"]["client_secret"] == "csecret"
     assert token_post["data"]["refresh_token"] == "rtoken"
     assert token_post["data"]["grant_type"] == "refresh_token"
     assert "key" not in calendar_get["params"]

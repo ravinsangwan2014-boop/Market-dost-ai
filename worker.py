@@ -80,8 +80,9 @@ def get_google_access_token(config):
         return None
     token_response = requests.post(
         "https://oauth2.googleapis.com/token",
-        auth=(config["google_client_id"], config["google_client_secret"]),
         data={
+            "client_id": config["google_client_id"],
+            "client_secret": config["google_client_secret"],
             "refresh_token": config["google_refresh_token"],
             "grant_type": "refresh_token",
         },
