@@ -36,6 +36,7 @@ def load_config():
         "google_client_secret": os.getenv("GOOGLE_CLIENT_SECRET", ""),
         "google_refresh_token": os.getenv("GOOGLE_REFRESH_TOKEN", ""),
         "google_alert_lead_minutes": env_int("GOOGLE_CALENDAR_ALERT_LEAD_MINUTES", 30),
+        "google_alert_lookback_minutes": env_int("GOOGLE_CALENDAR_ALERT_LOOKBACK_MINUTES", 0),
         "google_calendar_lookback_minutes": env_int("GOOGLE_CALENDAR_LOOKBACK_MINUTES", 15),
         "google_calendar_lookahead_minutes": env_int("GOOGLE_CALENDAR_LOOKAHEAD_MINUTES", 180),
         "telegram_dry_run": (os.getenv("TELEGRAM_DRY_RUN", "0") == "1"),
@@ -79,9 +80,8 @@ def get_google_access_token(config):
         return None
     token_response = requests.post(
         "https://oauth2.googleapis.com/token",
+        auth=(config["google_client_id"], config["google_client_secret"]),
         data={
-            "client_id": config["google_client_id"],
-            "client_secret": config["google_client_secret"],
             "refresh_token": config["google_refresh_token"],
             "grant_type": "refresh_token",
         },
@@ -95,7 +95,8 @@ def get_google_access_token(config):
 def fetch_google_calendar(config):
     calendar_id = config["google_calendar_id"] or "primary"
     now = datetime.now(timezone.utc)
-    time_min = (now - timedelta(minutes=max(0, config["google_calendar_lookback_minutes"]))).isoformat()
+    fetch_lookback_minutes = max(0, config["google_calendar_lookback_minutes"], config["google_alert_lookback_minutes"])
+    time_min = (now - timedelta(minutes=fetch_lookback_minutes)).isoformat()
     fetch_window_minutes = max(1, config["google_calendar_lookahead_minutes"], config["google_alert_lead_minutes"])
     time_max = (now + timedelta(minutes=fetch_window_minutes)).isoformat()
 
@@ -250,7 +251,7 @@ def poll_google(config):
 
     now = datetime.now(timezone.utc)
     alert_until = now + timedelta(minutes=max(1, config["google_alert_lead_minutes"]))
-    alert_from = now
+    alert_from = now - timedelta(minutes=max(0, config["google_alert_lookback_minutes"]))
     events = fetch_google_calendar(config)
     for event in events:
         evaluated += 1

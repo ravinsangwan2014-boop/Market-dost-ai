@@ -31,6 +31,7 @@ def _base_google_config():
         "google_client_secret": "",
         "google_refresh_token": "",
         "google_alert_lead_minutes": 30,
+        "google_alert_lookback_minutes": 0,
         "google_calendar_lookback_minutes": 15,
         "google_calendar_lookahead_minutes": 180,
         "telegram_dry_run": False,
@@ -145,3 +146,36 @@ def test_fetch_google_calendar_skips_without_api_key_or_oauth(monkeypatch):
 
     assert events == []
     assert post_called["value"] is False
+
+
+def test_fetch_google_calendar_uses_oauth_when_api_key_missing(monkeypatch):
+    config = _base_google_config()
+    config["google_api_key"] = ""
+    config["google_client_id"] = "cid"
+    config["google_client_secret"] = "csecret"
+    config["google_refresh_token"] = "rtoken"
+
+    token_post = {"auth": None, "data": None}
+    calendar_get = {"params": None, "headers": None}
+
+    def fake_post(url, auth=None, data=None, timeout=None):
+        token_post["auth"] = auth
+        token_post["data"] = data
+        return _FakeResponse({"access_token": "access-123"})
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        calendar_get["params"] = params or {}
+        calendar_get["headers"] = headers or {}
+        return _FakeResponse({"items": [{"id": "oauth-event"}]})
+
+    monkeypatch.setattr(worker.requests, "post", fake_post)
+    monkeypatch.setattr(worker.requests, "get", fake_get)
+
+    events = worker.fetch_google_calendar(config)
+
+    assert len(events) == 1
+    assert token_post["auth"] == ("cid", "csecret")
+    assert token_post["data"]["refresh_token"] == "rtoken"
+    assert token_post["data"]["grant_type"] == "refresh_token"
+    assert "key" not in calendar_get["params"]
+    assert calendar_get["headers"]["Authorization"].startswith("Bearer ")
