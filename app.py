@@ -1,5 +1,5 @@
 import os, time, requests, asyncio
-from fastapi import FastAPI, Request, Query
+from fastapi import FastAPI, Request, Query, Body, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
@@ -54,6 +54,11 @@ class CallbackRequest(BaseModel):
     url: str
     events: List[str] = ["price_change", "pnl_change", "score_change"]
     threshold: Optional[float] = None
+
+
+class CallbackUnregisterRequest(BaseModel):
+    """Request model for unregistering callbacks"""
+    url: str
 
 
 def configured(v: str) -> bool:
@@ -233,14 +238,21 @@ async def register_callback(callback: CallbackRequest):
 
 
 @app.post("/callbacks/unregister")
-async def unregister_callback(url: str):
+async def unregister_callback(
+    callback: Optional[CallbackUnregisterRequest] = Body(default=None),
+    url: Optional[str] = Query(default=None)
+):
     """Unregister a callback URL"""
+    callback_url = callback.url if callback else url
+    if not callback_url:
+        raise HTTPException(status_code=422, detail="url is required")
+
     async with callback_state_lock:
-        if url in registered_callbacks:
-            registered_callbacks.remove(url)
-            logger.info(f"Callback unregistered: {url}")
-            return {"message": "Callback unregistered", "url": url}
-    return {"message": "Callback not found", "url": url}
+        if callback_url in registered_callbacks:
+            registered_callbacks.remove(callback_url)
+            logger.info(f"Callback unregistered: {callback_url}")
+            return {"message": "Callback unregistered", "url": callback_url}
+    return {"message": "Callback not found", "url": callback_url}
 
 
 @app.get("/callbacks/list")
