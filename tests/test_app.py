@@ -1,11 +1,21 @@
 """
 Unit tests for Market Dost AI application
 """
+import app as app_module
 import pytest
 from fastapi.testclient import TestClient
 from app import app, registered_callbacks, callback_history
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def reset_callback_state():
+    registered_callbacks.clear()
+    callback_history.clear()
+    yield
+    registered_callbacks.clear()
+    callback_history.clear()
 
 
 class TestHealthEndpoints:
@@ -85,6 +95,39 @@ class TestCallbackManagement:
         data = response.json()
         assert isinstance(data["history"], list)
         assert "total" in data
+
+    def test_silver_schedules_callbacks_without_running_loop(self, monkeypatch):
+        calls = []
+
+        async def fake_trigger(event_type, payload):
+            calls.append((event_type, payload))
+
+        class ImmediateThread:
+            def __init__(self, target=None, args=(), kwargs=None, daemon=None):
+                self.target = target
+                self.args = args
+                self.kwargs = kwargs or {}
+
+            def start(self):
+                self.target(*self.args, **self.kwargs)
+
+        registered_callbacks.append("https://example.com/webhook")
+        monkeypatch.setattr(app_module, "td_price", lambda symbol: 32.5 if symbol == "XAG/USD" else 86.0)
+        monkeypatch.setattr(app_module, "trigger_callbacks", fake_trigger)
+        monkeypatch.setattr(app_module.threading, "Thread", ImmediateThread)
+
+        response = client.get("/silver")
+
+        assert response.status_code == 200
+        assert response.json()["confirmed"] is True
+        assert calls == [(
+            "price_change",
+            {
+                "xag_usd": 32.5,
+                "usd_inr": 86.0,
+                "indicative_inr_per_kg": 89861.34,
+            },
+        )]
 
 
 class TestMarketDataEndpoints:

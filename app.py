@@ -1,4 +1,4 @@
-import os, time, requests, asyncio
+import os, time, requests, asyncio, threading
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from typing import List, Optional
@@ -99,19 +99,33 @@ def score_from_change(xag=None, dxy=None, y10=None) -> dict:
 
 async def trigger_callbacks(event_type: str, payload: dict):
     """Trigger all registered callbacks for a given event type (non-blocking)"""
-    tasks = []
-    for callback_url in registered_callbacks:
-        task = asyncio.create_task(
-            invoke_callback(callback_url, event_type, payload)
-        )
-        tasks.append(task)
-    
+    tasks = [
+        asyncio.to_thread(invoke_callback, callback_url, event_type, payload)
+        for callback_url in list(registered_callbacks)
+    ]
+
     if tasks:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         logger.info(f"Triggered {len(results)} callbacks for event: {event_type}")
 
 
-async def invoke_callback(url: str, event_type: str, payload: dict):
+def schedule_callback_trigger(event_type: str, payload: dict):
+    """Schedule callback delivery whether or not the current thread has an event loop"""
+    if not registered_callbacks:
+        return
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        threading.Thread(
+            target=lambda: asyncio.run(trigger_callbacks(event_type, payload)),
+            daemon=True
+        ).start()
+    else:
+        loop.create_task(trigger_callbacks(event_type, payload))
+
+
+def invoke_callback(url: str, event_type: str, payload: dict):
     """Invoke a single callback URL"""
     callback_payload = {
         "event": event_type,
@@ -255,12 +269,11 @@ def silver():
         parity = parity_inr_kg(xag, fx)
         
         # Trigger callbacks (non-blocking)
-        if registered_callbacks:
-            asyncio.create_task(trigger_callbacks("price_change", {
-                "xag_usd": xag,
-                "usd_inr": fx,
-                "indicative_inr_per_kg": round(parity, 2)
-            }))
+        schedule_callback_trigger("price_change", {
+            "xag_usd": xag,
+            "usd_inr": fx,
+            "indicative_inr_per_kg": round(parity, 2)
+        })
         
         return {
             "confirmed": True,
@@ -297,13 +310,12 @@ def my_silver():
         pnl = value - cost
         
         # Trigger callbacks (non-blocking)
-        if registered_callbacks:
-            asyncio.create_task(trigger_callbacks("pnl_change", {
-                "quantity_kg": SILVER_KG,
-                "cost_basis_inr": round(cost, 2),
-                "indicative_value_inr": round(value, 2),
-                "unrealised_pnl_inr": round(pnl, 2)
-            }))
+        schedule_callback_trigger("pnl_change", {
+            "quantity_kg": SILVER_KG,
+            "cost_basis_inr": round(cost, 2),
+            "indicative_value_inr": round(value, 2),
+            "unrealised_pnl_inr": round(pnl, 2)
+        })
         
         return {
             "confirmed": True,
@@ -330,8 +342,7 @@ def score():
         score_data = score_from_change()
         
         # Trigger callbacks (non-blocking)
-        if registered_callbacks:
-            asyncio.create_task(trigger_callbacks("score_change", score_data))
+        schedule_callback_trigger("score_change", score_data)
         
         return score_data
     except Exception as e:
