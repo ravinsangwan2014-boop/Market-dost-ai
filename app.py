@@ -100,16 +100,23 @@ def score_from_change(xag=None, dxy=None, y10=None) -> dict:
 
 async def trigger_callbacks(event_type: str, payload: dict):
     """Trigger all registered callbacks for a given event type (non-blocking)"""
-    with callback_state_lock:
-        callbacks = list(registered_callbacks)
-
     tasks = [
-        asyncio.to_thread(invoke_callback, callback_url, event_type, payload)
-        for callback_url in callbacks
+        invoke_callback(callback_url, event_type, payload)
+        for callback_url in get_registered_callbacks()
     ]
 
     if tasks:
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info(f"Triggered {len(results)} callbacks for event: {event_type}")
+
+
+def trigger_callbacks_sync(event_type: str, payload: dict):
+    """Trigger all registered callbacks from a worker thread"""
+    results = [
+        invoke_callback_sync(callback_url, event_type, payload)
+        for callback_url in get_registered_callbacks()
+    ]
+    if results:
         logger.info(f"Triggered {len(results)} callbacks for event: {event_type}")
 
 
@@ -125,14 +132,21 @@ def schedule_callback_trigger(event_type: str, payload: dict):
         loop = asyncio.get_running_loop()
     except RuntimeError:
         threading.Thread(
-            target=lambda: asyncio.run(trigger_callbacks(event_type, payload)),
+            target=trigger_callbacks_sync,
+            args=(event_type, payload),
             daemon=True
         ).start()
     else:
         loop.create_task(trigger_callbacks(event_type, payload))
 
 
-def invoke_callback(url: str, event_type: str, payload: dict):
+def get_registered_callbacks() -> List[str]:
+    """Return a stable snapshot of registered callbacks"""
+    with callback_state_lock:
+        return list(registered_callbacks)
+
+
+def invoke_callback_sync(url: str, event_type: str, payload: dict):
     """Invoke a single callback URL"""
     callback_payload = {
         "event": event_type,
@@ -167,6 +181,11 @@ def invoke_callback(url: str, event_type: str, payload: dict):
     with callback_state_lock:
         callback_history.append(result)
     return result
+
+
+async def invoke_callback(url: str, event_type: str, payload: dict):
+    """Invoke a single callback URL without blocking the event loop"""
+    return await asyncio.to_thread(invoke_callback_sync, url, event_type, payload)
 
 
 # =====================

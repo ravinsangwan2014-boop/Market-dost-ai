@@ -101,7 +101,7 @@ class TestCallbackManagement:
     def test_silver_schedules_callbacks_without_running_loop(self, monkeypatch):
         calls = []
 
-        async def fake_trigger(event_type, payload):
+        def fake_trigger(event_type, payload):
             calls.append((event_type, payload))
 
         class ImmediateThread:
@@ -115,7 +115,7 @@ class TestCallbackManagement:
 
         registered_callbacks.append("https://example.com/webhook")
         monkeypatch.setattr(app_module, "td_price", lambda symbol: 32.5 if symbol == "XAG/USD" else 86.0)
-        monkeypatch.setattr(app_module, "trigger_callbacks", fake_trigger)
+        monkeypatch.setattr(app_module, "trigger_callbacks_sync", fake_trigger)
         monkeypatch.setattr(app_module.threading, "Thread", ImmediateThread)
 
         response = client.get("/silver")
