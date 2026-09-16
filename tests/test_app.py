@@ -370,10 +370,10 @@ class TestAsyncScheduling:
     def test_schedule_callback_dispatch_without_running_loop(self, monkeypatch):
         seen = {}
 
-        async def fake_invoke_callback(url, event_type, payload, use_async_state_lock=True):
-            seen["url"] = url
+        async def fake_trigger_callbacks(event_type, payload, callback_urls=None):
             seen["event_type"] = event_type
             seen["payload"] = payload
+            seen["callback_urls"] = callback_urls
 
         class DummyThread:
             def __init__(self, target=None, args=(), daemon=False):
@@ -385,7 +385,7 @@ class TestAsyncScheduling:
             def start(self):
                 self._target(*self._args)
 
-        monkeypatch.setattr(app_module, "invoke_callback", fake_invoke_callback)
+        monkeypatch.setattr(app_module, "trigger_callbacks", fake_trigger_callbacks)
         monkeypatch.setattr(app_module.threading, "Thread", DummyThread)
         registered_callbacks.append("https://example.com/webhook")
 
@@ -395,9 +395,9 @@ class TestAsyncScheduling:
             list(registered_callbacks),
         )
 
-        assert seen["url"] == "https://example.com/webhook"
         assert seen["event_type"] == "price_change"
         assert seen["payload"]["xag_usd"] == 30.0
+        assert seen["callback_urls"] == ["https://example.com/webhook"]
         assert seen["daemon"] is True
 
     def test_register_callback_waits_on_state_lock(self):
