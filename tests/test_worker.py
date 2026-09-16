@@ -69,3 +69,14 @@ def test_poll_google_deduplicates_same_event(monkeypatch):
     assert first["alerts_sent"] == 1
     assert second["alerts_sent"] == 0
     assert second["skipped_seen"] == 1
+
+
+def test_parse_google_event_start_supports_all_day_date():
+    event = {"start": {"date": "2026-12-25"}}
+    start = worker.parse_google_event_start(event)
+
+    assert start is not None
+    assert start.tzinfo is not None
+    assert start.year == 2026
+    assert start.month == 12
+    assert start.day == 25

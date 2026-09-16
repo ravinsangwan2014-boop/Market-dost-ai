@@ -242,7 +242,7 @@ def poll_google(config):
 
     now = datetime.now(timezone.utc)
     alert_until = now + timedelta(minutes=max(1, config["google_alert_lead_minutes"]))
-    alert_from = now - timedelta(minutes=max(0, config["google_calendar_lookback_minutes"]))
+    alert_from = now
     events = fetch_google_calendar(config)
     for event in events:
         evaluated += 1
