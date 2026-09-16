@@ -302,6 +302,7 @@ class TestAsyncScheduling:
                 self._target = target
                 self._args = args
                 self.daemon = daemon
+                seen["daemon"] = daemon
 
             def start(self):
                 self._target(*self._args)
@@ -319,6 +320,7 @@ class TestAsyncScheduling:
         assert seen["url"] == "https://example.com/webhook"
         assert seen["event_type"] == "price_change"
         assert seen["payload"]["xag_usd"] == 30.0
+        assert seen["daemon"] is True
 
     def test_register_callback_waits_on_state_lock(self):
         async def run_test():

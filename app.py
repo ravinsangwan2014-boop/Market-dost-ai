@@ -121,8 +121,7 @@ async def trigger_callbacks(event_type: str, payload: dict, callback_urls: Optio
 async def invoke_callback(
     url: str,
     event_type: str,
-    payload: dict,
-    use_async_state_lock: bool = True
+    payload: dict
 ):
     """Invoke a single callback URL"""
     callback_payload = {
@@ -156,12 +155,8 @@ async def invoke_callback(
         }
         logger.error(f"Callback {url} failed: {str(e)}")
     
-    if use_async_state_lock:
-        with callback_history_lock:
-            callback_history.append(result)
-    else:
-        with callback_history_lock:
-            callback_history.append(result)
+    with callback_history_lock:
+        callback_history.append(result)
     return result
 
 
@@ -171,7 +166,7 @@ async def _dispatch_callbacks_without_loop_lock(event_type: str, payload: dict, 
     for callback_url in callback_urls:
         tasks.append(
             asyncio.create_task(
-                invoke_callback(callback_url, event_type, payload, use_async_state_lock=False)
+                invoke_callback(callback_url, event_type, payload)
             )
         )
     if tasks:
