@@ -1,5 +1,5 @@
 import os, time, requests, asyncio, threading
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Query
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
@@ -25,6 +25,28 @@ TG_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 registered_callbacks: List[str] = []
 callback_history: List[dict] = []
 callback_state_lock = threading.Lock()
+
+
+def _callbacks_snapshot() -> List[str]:
+    with callback_state_lock:
+        return list(registered_callbacks)
+
+
+def _has_callbacks() -> bool:
+    with callback_state_lock:
+        return bool(registered_callbacks)
+
+
+def _append_callback_result(result: dict) -> None:
+    with callback_state_lock:
+        callback_history.append(result)
+
+
+def _history_snapshot(limit: int) -> tuple[List[dict], int]:
+    with callback_state_lock:
+        history = callback_history[-limit:] if limit else []
+        total = len(callback_history)
+    return history, total
 
 
 class CallbackRequest(BaseModel):
@@ -101,8 +123,7 @@ def score_from_change(xag=None, dxy=None, y10=None) -> dict:
 
 async def trigger_callbacks(event_type: str, payload: dict):
     """Trigger all registered callbacks for a given event type (non-blocking)"""
-    with callback_state_lock:
-        callbacks = list(registered_callbacks)
+    callbacks = await asyncio.to_thread(_callbacks_snapshot)
 
     if callbacks:
         results = await asyncio.gather(
@@ -145,8 +166,7 @@ async def invoke_callback(url: str, event_type: str, payload: dict):
         }
         logger.error(f"Callback {url} failed: {str(e)}")
     
-    with callback_state_lock:
-        callback_history.append(result)
+    await asyncio.to_thread(_append_callback_result, result)
     return result
 
 
@@ -213,7 +233,7 @@ def register_callback(callback: CallbackRequest):
 
 
 @app.post("/callbacks/unregister")
-def unregister_callback(url: str):
+def unregister_callback(url: str = Query(...)):
     """Unregister a callback URL"""
     with callback_state_lock:
         if url in registered_callbacks:
@@ -226,8 +246,7 @@ def unregister_callback(url: str):
 @app.get("/callbacks/list")
 def list_callbacks():
     """List all registered callbacks"""
-    with callback_state_lock:
-        callbacks = list(registered_callbacks)
+    callbacks = _callbacks_snapshot()
     return {
         "callbacks": callbacks,
         "total": len(callbacks)
@@ -238,9 +257,7 @@ def list_callbacks():
 def get_callback_history(limit: int = 50):
     """Get callback invocation history"""
     limit = max(limit, 0)
-    with callback_state_lock:
-        history = callback_history[-limit:] if limit else []
-        total = len(callback_history)
+    history, total = _history_snapshot(limit)
     return {
         "history": history,
         "total": total
@@ -267,8 +284,7 @@ async def silver():
         parity = parity_inr_kg(xag, fx)
         
         # Trigger callbacks (non-blocking)
-        with callback_state_lock:
-            has_callbacks = bool(registered_callbacks)
+        has_callbacks = await asyncio.to_thread(_has_callbacks)
         if has_callbacks:
             asyncio.create_task(trigger_callbacks("price_change", {
                 "xag_usd": xag,
@@ -311,8 +327,7 @@ async def my_silver():
         pnl = value - cost
         
         # Trigger callbacks (non-blocking)
-        with callback_state_lock:
-            has_callbacks = bool(registered_callbacks)
+        has_callbacks = await asyncio.to_thread(_has_callbacks)
         if has_callbacks:
             asyncio.create_task(trigger_callbacks("pnl_change", {
                 "quantity_kg": SILVER_KG,
@@ -346,8 +361,7 @@ async def score():
         score_data = score_from_change()
         
         # Trigger callbacks (non-blocking)
-        with callback_state_lock:
-            has_callbacks = bool(registered_callbacks)
+        has_callbacks = await asyncio.to_thread(_has_callbacks)
         if has_callbacks:
             asyncio.create_task(trigger_callbacks("score_change", score_data))
         

@@ -135,9 +135,11 @@ class TestCallbackAsyncDispatch:
     def test_trigger_callbacks_dispatches_all_registered(self, monkeypatch):
         original_callbacks = list(registered_callbacks)
         called_urls = []
+        callback_urls = ["https://example.com/a", "https://example.com/b"]
         try:
             registered_callbacks.clear()
-            registered_callbacks.extend(["https://example.com/a", "https://example.com/b"])
+            for callback_url in callback_urls:
+                client.post("/callbacks/register", json={"url": callback_url})
 
             async def fake_invoke(url, event_type, payload):
                 called_urls.append((url, event_type, payload))
