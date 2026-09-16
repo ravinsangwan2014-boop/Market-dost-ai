@@ -16,13 +16,7 @@ services:
       TIMEZONE: ${TIMEZONE:-Asia/Kolkata}
     restart: unless-stopped
     healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8080/health/live', timeout=5)",
-        ]
+      test: ["CMD", "python", "-c", "import sys, urllib.request; response = urllib.request.urlopen('http://localhost:8080/health/live', timeout=10); sys.exit(0 if 200 <= response.getcode() < 300 else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3
