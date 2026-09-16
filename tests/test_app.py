@@ -281,6 +281,62 @@ class TestTelegramEndpoints:
         assert "'score': 50" in sent["json"]["text"]
         assert sent["timeout"] == 12.0
 
+    @pytest.mark.parametrize(
+        "command,handler_name,expected_fragment",
+        [
+            ("/silver", "silver", "'confirmed': True"),
+            ("/mysilver", "my_silver", "'confirmed': True"),
+        ],
+    )
+    def test_telegram_webhook_market_commands_use_async_handlers(
+        self, monkeypatch, command, handler_name, expected_fragment
+    ):
+        sent = {}
+
+        class DummyAsyncClient:
+            def __init__(self, timeout):
+                self.timeout = timeout
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, url, json, timeout=None):
+                sent["url"] = url
+                sent["json"] = json
+                sent["timeout"] = timeout
+
+                class DummyResponse:
+                    status_code = 200
+                    is_success = True
+
+                return DummyResponse()
+
+        async def fake_market_handler():
+            return {"confirmed": True, "command": command}
+
+        monkeypatch.setattr(app_module, handler_name, fake_market_handler)
+        monkeypatch.setattr(app_module, "TG_TOKEN", "test-token")
+        monkeypatch.setattr(app_module.httpx, "AsyncClient", DummyAsyncClient)
+
+        response = client.post(
+            "/telegram/webhook",
+            json={
+                "message": {
+                    "text": command,
+                    "chat": {"id": 12345}
+                }
+            }
+        )
+
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        assert sent["url"].endswith("/bottest-token/sendMessage")
+        assert expected_fragment in sent["json"]["text"]
+        assert sent["timeout"] == 12.0
+
 
 class TestErrorHandling:
     """Test error handling"""

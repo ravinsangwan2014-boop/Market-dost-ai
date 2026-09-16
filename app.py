@@ -233,7 +233,7 @@ async def register_callback(callback: CallbackRequest):
 
 
 @app.post("/callbacks/unregister")
-async def unregister_callback(url: str = Query(...)):
+async def unregister_callback(url: str):
     """Unregister a callback URL"""
     async with callback_state_lock:
         if url in registered_callbacks:
@@ -254,9 +254,8 @@ async def list_callbacks():
 
 
 @app.get("/callbacks/history")
-async def get_callback_history(limit: int = 50):
+async def get_callback_history(limit: int = Query(50, ge=0)):
     """Get callback invocation history"""
-    limit = max(limit, 0)
     history, total = await _history_snapshot(limit)
     return {
         "history": history,
