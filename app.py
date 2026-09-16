@@ -115,7 +115,10 @@ async def trigger_callbacks(event_type: str, payload: dict):
 
 def schedule_callback_trigger(event_type: str, payload: dict):
     """Schedule callback delivery whether or not the current thread has an event loop"""
-    if not registered_callbacks:
+    with callback_state_lock:
+        has_callbacks = bool(registered_callbacks)
+
+    if not has_callbacks:
         return
 
     try:

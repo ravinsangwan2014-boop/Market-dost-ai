@@ -4,18 +4,20 @@ Unit tests for Market Dost AI application
 import app as app_module
 import pytest
 from fastapi.testclient import TestClient
-from app import app, registered_callbacks, callback_history
+from app import app, registered_callbacks, callback_history, callback_state_lock
 
 client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
 def reset_callback_state():
-    registered_callbacks.clear()
-    callback_history.clear()
+    with callback_state_lock:
+        registered_callbacks.clear()
+        callback_history.clear()
     yield
-    registered_callbacks.clear()
-    callback_history.clear()
+    with callback_state_lock:
+        registered_callbacks.clear()
+        callback_history.clear()
 
 
 class TestHealthEndpoints:
