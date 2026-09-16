@@ -23,7 +23,6 @@ TG_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # Callback storage
 registered_callbacks: List[str] = []
-registered_callback_events: dict[str, List[str]] = {}
 callback_history: List[dict] = []
 callback_state_lock = threading.Lock()
 
@@ -246,17 +245,14 @@ def providers_status():
 def register_callback(callback: CallbackRequest):
     """Register a callback URL for market events"""
     with callback_state_lock:
-        already_registered = callback.url in registered_callbacks
-        if not already_registered:
+        if callback.url not in registered_callbacks:
             registered_callbacks.append(callback.url)
-            registered_callback_events[callback.url] = list(callback.events)
             logger.info(f"Callback registered: {callback.url}")
-        stored_events = list(registered_callback_events.get(callback.url, callback.events))
         total_callbacks = len(registered_callbacks)
     return {
-        "message": "Callback already registered" if already_registered else "Callback registered",
+        "message": "Callback registered",
         "url": callback.url,
-        "events": stored_events,
+        "events": callback.events,
         "total_callbacks": total_callbacks
     }
 
@@ -267,7 +263,6 @@ def unregister_callback(url: str):
     with callback_state_lock:
         if url in registered_callbacks:
             registered_callbacks.remove(url)
-            registered_callback_events.pop(url, None)
             logger.info(f"Callback unregistered: {url}")
             return {"message": "Callback unregistered", "url": url}
     return {"message": "Callback not found", "url": url}

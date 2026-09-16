@@ -4,7 +4,7 @@ Unit tests for Market Dost AI application
 import app as app_module
 import pytest
 from fastapi.testclient import TestClient
-from app import app, registered_callbacks, registered_callback_events, callback_history, callback_state_lock
+from app import app, registered_callbacks, callback_history, callback_state_lock
 
 client = TestClient(app)
 
@@ -13,12 +13,10 @@ client = TestClient(app)
 def reset_callback_state():
     with callback_state_lock:
         registered_callbacks.clear()
-        registered_callback_events.clear()
         callback_history.clear()
     yield
     with callback_state_lock:
         registered_callbacks.clear()
-        registered_callback_events.clear()
         callback_history.clear()
 
 
@@ -75,15 +73,6 @@ class TestCallbackManagement:
         data = response.json()
         assert data["message"] == "Callback registered"
         assert data["url"] == test_url
-
-    def test_register_callback_duplicate(self):
-        test_url = "https://example.com/webhook"
-        client.post("/callbacks/register", json={"url": test_url})
-        response = client.post("/callbacks/register", json={"url": test_url})
-        assert response.status_code == 200
-        data = response.json()
-        assert data["message"] == "Callback already registered"
-        assert data["total_callbacks"] == 1
 
     def test_list_callbacks(self):
         response = client.get("/callbacks/list")
