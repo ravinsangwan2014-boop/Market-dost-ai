@@ -178,10 +178,8 @@ def _run_callback_dispatch(event_type: str, payload: dict, callback_urls: List[s
     asyncio.run(_dispatch_callbacks_without_loop_lock(event_type, payload, callback_urls))
 
 
-def schedule_callback_dispatch(event_type: str, payload: dict, callback_urls: Optional[List[str]] = None):
+def schedule_callback_dispatch(event_type: str, payload: dict, callback_urls: List[str]):
     """Schedule callback dispatch with event-loop fallback."""
-    if callback_urls is None:
-        raise ValueError("callback_urls snapshot is required")
     if not callback_urls:
         return
 
