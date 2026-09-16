@@ -106,6 +106,41 @@ class TestCallbackManagement:
         assert isinstance(data["history"], list)
         assert "total" in data
 
+    def test_invoke_callback_uses_httpx_success_flag(self, monkeypatch):
+        class DummyAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, url, json):
+                return type(
+                    "Resp",
+                    (),
+                    {
+                        "is_success": True,
+                        "status_code": 200,
+                    },
+                )()
+
+        monkeypatch.setattr(
+            app_module.httpx,
+            "AsyncClient",
+            lambda *args, **kwargs: DummyAsyncClient(),
+        )
+
+        result = asyncio.run(
+            app_module.invoke_callback(
+                "https://example.com/callback",
+                "price_change",
+                {"xag_usd": 31.0},
+            )
+        )
+
+        assert result["success"] is True
+        assert result["status"] == 200
+
 
 class TestMarketDataEndpoints:
     """Test market data endpoints"""
@@ -355,6 +390,40 @@ class TestAsyncScheduling:
             assert callback_url in registered_callbacks
 
         asyncio.run(run_test())
+
+    def test_silver_offloads_price_fetches_with_to_thread(self, monkeypatch):
+        seen = []
+
+        async def fake_to_thread(func, symbol):
+            seen.append((func, symbol))
+            return {"XAG/USD": 31.0, "USD/INR": 84.0}[symbol]
+
+        monkeypatch.setattr(app_module.asyncio, "to_thread", fake_to_thread)
+
+        result = asyncio.run(app_module.silver())
+
+        assert seen == [
+            (app_module.td_price, "XAG/USD"),
+            (app_module.td_price, "USD/INR"),
+        ]
+        assert result["confirmed"] is True
+
+    def test_mysilver_offloads_price_fetches_with_to_thread(self, monkeypatch):
+        seen = []
+
+        async def fake_to_thread(func, symbol):
+            seen.append((func, symbol))
+            return {"XAG/USD": 31.0, "USD/INR": 84.0}[symbol]
+
+        monkeypatch.setattr(app_module.asyncio, "to_thread", fake_to_thread)
+
+        result = asyncio.run(app_module.my_silver())
+
+        assert seen == [
+            (app_module.td_price, "XAG/USD"),
+            (app_module.td_price, "USD/INR"),
+        ]
+        assert result["confirmed"] is True
 
 
 if __name__ == "__main__":

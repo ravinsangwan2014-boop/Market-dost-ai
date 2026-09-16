@@ -133,14 +133,15 @@ async def invoke_callback(
     try:
         async with httpx.AsyncClient(timeout=12.0) as client:
             response = await client.post(url, json=callback_payload)
+        success = response.is_success
         result = {
             "callback_url": url,
             "event": event_type,
             "status": response.status_code,
-            "success": response.ok,
+            "success": success,
             "timestamp": datetime.utcnow().isoformat()
         }
-        if response.ok:
+        if success:
             logger.info(f"Callback {url} executed successfully for {event_type}")
         else:
             logger.warning(f"Callback {url} returned status {response.status_code}")
@@ -315,8 +316,10 @@ async def get_callback_history(limit: int = 50):
 async def silver():
     """Get current silver price in USD and parity in INR per kg"""
     try:
-        xag = td_price("XAG/USD")
-        fx = td_price("USD/INR")
+        xag, fx = await asyncio.gather(
+            asyncio.to_thread(td_price, "XAG/USD"),
+            asyncio.to_thread(td_price, "USD/INR"),
+        )
         if xag is None or fx is None:
             return {
                 "confirmed": False,
@@ -356,8 +359,10 @@ async def silver():
 async def my_silver():
     """Get personal silver portfolio P&L"""
     try:
-        xag = td_price("XAG/USD")
-        fx = td_price("USD/INR")
+        xag, fx = await asyncio.gather(
+            asyncio.to_thread(td_price, "XAG/USD"),
+            asyncio.to_thread(td_price, "USD/INR"),
+        )
         if xag is None or fx is None:
             return {
                 "confirmed": False,
