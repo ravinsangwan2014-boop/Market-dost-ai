@@ -264,18 +264,8 @@ async def register_callback(callback: CallbackRequest):
 
 
 @app.post("/callbacks/unregister")
-async def unregister_callback(request: Request, url: Optional[str] = None):
+async def unregister_callback(url: str):
     """Unregister a callback URL"""
-    if not url:
-        try:
-            body = await request.json()
-            url = body.get("url")
-        except Exception:
-            url = None
-
-    if not url:
-        return {"message": "Callback not found", "url": url}
-
     async with callback_state_lock:
         if url in registered_callbacks:
             registered_callbacks.remove(url)
