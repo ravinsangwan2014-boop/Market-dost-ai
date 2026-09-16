@@ -261,9 +261,10 @@ class TestAsyncScheduling:
         async def run_test():
             event = asyncio.Event()
 
-            async def fake_trigger_callbacks(event_type, payload):
+            async def fake_trigger_callbacks(event_type, payload, callback_urls=None):
                 seen["event_type"] = event_type
                 seen["payload"] = payload
+                seen["callback_urls"] = callback_urls
                 event.set()
 
             monkeypatch.setattr(app_module, "trigger_callbacks", fake_trigger_callbacks)
@@ -275,12 +276,18 @@ class TestAsyncScheduling:
                 ),
             )
 
-            app_module.schedule_callback_dispatch("score_change", {"score": 50})
+            registered_callbacks.append("https://example.com/loop")
+            app_module.schedule_callback_dispatch(
+                "score_change",
+                {"score": 50},
+                list(registered_callbacks),
+            )
             await asyncio.wait_for(event.wait(), timeout=1)
 
         asyncio.run(run_test())
         assert seen["event_type"] == "score_change"
         assert seen["payload"]["score"] == 50
+        assert seen["callback_urls"] == ["https://example.com/loop"]
 
     def test_schedule_callback_dispatch_without_running_loop(self, monkeypatch):
         seen = {}
@@ -303,7 +310,11 @@ class TestAsyncScheduling:
         monkeypatch.setattr(app_module.threading, "Thread", DummyThread)
         registered_callbacks.append("https://example.com/webhook")
 
-        app_module.schedule_callback_dispatch("price_change", {"xag_usd": 30.0})
+        app_module.schedule_callback_dispatch(
+            "price_change",
+            {"xag_usd": 30.0},
+            list(registered_callbacks),
+        )
 
         assert seen["url"] == "https://example.com/webhook"
         assert seen["event_type"] == "price_change"

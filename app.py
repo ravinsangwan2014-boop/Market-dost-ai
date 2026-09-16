@@ -100,10 +100,10 @@ def score_from_change(xag=None, dxy=None, y10=None) -> dict:
     return {"score": score, "bias": "Neutral", "confidence": confidence, "reasons": reasons}
 
 
-async def trigger_callbacks(event_type: str, payload: dict):
+async def trigger_callbacks(event_type: str, payload: dict, callback_urls: Optional[List[str]] = None):
     """Trigger all registered callbacks for a given event type (non-blocking)"""
-    async with callback_state_lock:
-        with callback_state_thread_lock:
+    if callback_urls is None:
+        async with callback_state_lock:
             callback_urls = list(registered_callbacks)
 
     tasks = []
@@ -158,8 +158,7 @@ async def invoke_callback(
     
     if use_async_state_lock:
         async with callback_state_lock:
-            with callback_state_thread_lock:
-                callback_history.append(result)
+            callback_history.append(result)
     else:
         with callback_state_thread_lock:
             callback_history.append(result)
@@ -184,19 +183,18 @@ def _run_callback_dispatch(event_type: str, payload: dict, callback_urls: List[s
     asyncio.run(_dispatch_callbacks_without_loop_lock(event_type, payload, callback_urls))
 
 
-def schedule_callback_dispatch(event_type: str, payload: dict):
+def schedule_callback_dispatch(event_type: str, payload: dict, callback_urls: Optional[List[str]] = None):
     """Schedule callback dispatch with event-loop fallback."""
+    callback_urls = callback_urls or []
+    if not callback_urls:
+        return
+
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(trigger_callbacks(event_type, payload))
+        loop.create_task(trigger_callbacks(event_type, payload, callback_urls))
         return
     except RuntimeError:
         pass
-
-    with callback_state_thread_lock:
-        callback_urls = list(registered_callbacks)
-    if not callback_urls:
-        return
 
     thread = threading.Thread(
         target=_run_callback_dispatch,
@@ -256,11 +254,10 @@ def providers_status():
 async def register_callback(callback: CallbackRequest):
     """Register a callback URL for market events"""
     async with callback_state_lock:
-        with callback_state_thread_lock:
-            if callback.url not in registered_callbacks:
-                registered_callbacks.append(callback.url)
-                logger.info(f"Callback registered: {callback.url}")
-            total_callbacks = len(registered_callbacks)
+        if callback.url not in registered_callbacks:
+            registered_callbacks.append(callback.url)
+            logger.info(f"Callback registered: {callback.url}")
+        total_callbacks = len(registered_callbacks)
     return {
         "message": "Callback registered",
         "url": callback.url,
@@ -273,11 +270,10 @@ async def register_callback(callback: CallbackRequest):
 async def unregister_callback(url: str):
     """Unregister a callback URL"""
     async with callback_state_lock:
-        with callback_state_thread_lock:
-            if url in registered_callbacks:
-                registered_callbacks.remove(url)
-                logger.info(f"Callback unregistered: {url}")
-                return {"message": "Callback unregistered", "url": url}
+        if url in registered_callbacks:
+            registered_callbacks.remove(url)
+            logger.info(f"Callback unregistered: {url}")
+            return {"message": "Callback unregistered", "url": url}
     return {"message": "Callback not found", "url": url}
 
 
@@ -285,9 +281,8 @@ async def unregister_callback(url: str):
 async def list_callbacks():
     """List all registered callbacks"""
     async with callback_state_lock:
-        with callback_state_thread_lock:
-            callbacks = list(registered_callbacks)
-            total = len(registered_callbacks)
+        callbacks = list(registered_callbacks)
+        total = len(registered_callbacks)
     return {
         "callbacks": callbacks,
         "total": total
@@ -298,9 +293,8 @@ async def list_callbacks():
 async def get_callback_history(limit: int = 50):
     """Get callback invocation history"""
     async with callback_state_lock:
-        with callback_state_thread_lock:
-            history = callback_history[-limit:]
-            total = len(callback_history)
+        history = callback_history[-limit:]
+        total = len(callback_history)
     return {
         "history": history,
         "total": total
@@ -328,14 +322,13 @@ async def silver():
         
         # Trigger callbacks (non-blocking)
         async with callback_state_lock:
-            with callback_state_thread_lock:
-                has_callbacks = bool(registered_callbacks)
-        if has_callbacks:
+            callback_urls = list(registered_callbacks)
+        if callback_urls:
             schedule_callback_dispatch("price_change", {
                 "xag_usd": xag,
                 "usd_inr": fx,
                 "indicative_inr_per_kg": round(parity, 2)
-            })
+            }, callback_urls)
         
         return {
             "confirmed": True,
@@ -373,15 +366,14 @@ async def my_silver():
         
         # Trigger callbacks (non-blocking)
         async with callback_state_lock:
-            with callback_state_thread_lock:
-                has_callbacks = bool(registered_callbacks)
-        if has_callbacks:
+            callback_urls = list(registered_callbacks)
+        if callback_urls:
             schedule_callback_dispatch("pnl_change", {
                 "quantity_kg": SILVER_KG,
                 "cost_basis_inr": round(cost, 2),
                 "indicative_value_inr": round(value, 2),
                 "unrealised_pnl_inr": round(pnl, 2)
-            })
+            }, callback_urls)
         
         return {
             "confirmed": True,
@@ -409,10 +401,9 @@ async def score():
         
         # Trigger callbacks (non-blocking)
         async with callback_state_lock:
-            with callback_state_thread_lock:
-                has_callbacks = bool(registered_callbacks)
-        if has_callbacks:
-            schedule_callback_dispatch("score_change", score_data)
+            callback_urls = list(registered_callbacks)
+        if callback_urls:
+            schedule_callback_dispatch("score_change", score_data, callback_urls)
         
         return score_data
     except Exception as e:
