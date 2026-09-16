@@ -16,7 +16,7 @@ services:
       TIMEZONE: ${TIMEZONE:-Asia/Kolkata}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health/live"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health/live', timeout=10)"]
       interval: 30s
       timeout: 10s
       retries: 3

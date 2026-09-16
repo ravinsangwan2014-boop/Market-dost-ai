@@ -2,10 +2,21 @@
 Unit tests for Market Dost AI application
 """
 import pytest
+import asyncio
+import app as app_module
 from fastapi.testclient import TestClient
 from app import app, registered_callbacks, callback_history
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def reset_callback_state():
+    registered_callbacks.clear()
+    callback_history.clear()
+    yield
+    registered_callbacks.clear()
+    callback_history.clear()
 
 
 class TestHealthEndpoints:
@@ -159,6 +170,44 @@ class TestTelegramEndpoints:
         data = response.json()
         assert data["ok"] is True
 
+    def test_telegram_webhook_silver_command_async_path(self, monkeypatch):
+        async def fake_silver():
+            return {"confirmed": True, "xag_usd": 31.0}
+
+        class DummyAsyncClient:
+            def __init__(self, *args, **kwargs):
+                self.post_calls = []
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, url, json):
+                self.post_calls.append((url, json))
+                return type("Resp", (), {"ok": True, "status_code": 200})()
+
+        dummy_client = DummyAsyncClient()
+        monkeypatch.setattr(app_module, "silver", fake_silver)
+        monkeypatch.setattr(app_module, "TG_TOKEN", "token")
+        monkeypatch.setattr(
+            app_module.httpx,
+            "AsyncClient",
+            lambda *args, **kwargs: dummy_client,
+        )
+
+        response = client.post(
+            "/telegram/webhook",
+            json={"message": {"text": "/silver", "chat": {"id": 12345}}},
+        )
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        assert dummy_client.post_calls
+        _, sent_payload = dummy_client.post_calls[0]
+        assert sent_payload["chat_id"] == 12345
+        assert "xag_usd" in sent_payload["text"]
+
 
 class TestErrorHandling:
     """Test error handling"""
@@ -171,6 +220,81 @@ class TestErrorHandling:
         assert response.status_code == 200
         data = response.json()
         assert data["message"] == "Callback not found"
+
+
+class TestAsyncScheduling:
+    def test_callback_routes_are_async(self):
+        assert asyncio.iscoroutinefunction(app_module.silver)
+        assert asyncio.iscoroutinefunction(app_module.my_silver)
+        assert asyncio.iscoroutinefunction(app_module.score)
+
+    def test_schedule_callback_dispatch_with_running_loop(self, monkeypatch):
+        seen = {}
+
+        async def run_test():
+            event = asyncio.Event()
+
+            async def fake_trigger_callbacks(event_type, payload):
+                seen["event_type"] = event_type
+                seen["payload"] = payload
+                event.set()
+
+            monkeypatch.setattr(app_module, "trigger_callbacks", fake_trigger_callbacks)
+            monkeypatch.setattr(
+                app_module.threading,
+                "Thread",
+                lambda *args, **kwargs: (_ for _ in ()).throw(
+                    AssertionError("Thread fallback should not be used when loop is running")
+                ),
+            )
+
+            app_module.schedule_callback_dispatch("score_change", {"score": 50})
+            await asyncio.wait_for(event.wait(), timeout=1)
+
+        asyncio.run(run_test())
+        assert seen["event_type"] == "score_change"
+        assert seen["payload"]["score"] == 50
+
+    def test_schedule_callback_dispatch_without_running_loop(self, monkeypatch):
+        seen = {}
+
+        async def fake_trigger_callbacks(event_type, payload):
+            seen["event_type"] = event_type
+            seen["payload"] = payload
+
+        class DummyThread:
+            def __init__(self, target=None, args=(), daemon=False):
+                self._target = target
+                self._args = args
+                self.daemon = daemon
+
+            def start(self):
+                self._target(*self._args)
+
+        monkeypatch.setattr(app_module, "trigger_callbacks", fake_trigger_callbacks)
+        monkeypatch.setattr(app_module.threading, "Thread", DummyThread)
+
+        app_module.schedule_callback_dispatch("price_change", {"xag_usd": 30.0})
+
+        assert seen["event_type"] == "price_change"
+        assert seen["payload"]["xag_usd"] == 30.0
+
+    def test_register_callback_waits_on_state_lock(self):
+        async def run_test():
+            callback_url = "https://example.com/lock-test"
+
+            async with app_module.callback_state_lock:
+                task = asyncio.create_task(
+                    app_module.register_callback(app_module.CallbackRequest(url=callback_url))
+                )
+                await asyncio.sleep(0)
+                assert callback_url not in registered_callbacks
+
+            result = await asyncio.wait_for(task, timeout=1)
+            assert result["message"] == "Callback registered"
+            assert callback_url in registered_callbacks
+
+        asyncio.run(run_test())
 
 
 if __name__ == "__main__":
