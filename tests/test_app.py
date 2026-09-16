@@ -2,8 +2,11 @@
 Unit tests for Market Dost AI application
 """
 import pytest
+import asyncio
+import inspect
 from fastapi.testclient import TestClient
-from app import app, registered_callbacks, callback_history
+import app as app_module
+from app import app, registered_callbacks, callback_history, trigger_callbacks, invoke_callback, silver, my_silver, score
 
 client = TestClient(app)
 
@@ -119,6 +122,66 @@ class TestMarketDataEndpoints:
         assert "bias" in data
         assert "confidence" in data
         assert "reasons" in data
+
+    def test_market_routes_are_async(self):
+        assert inspect.iscoroutinefunction(silver)
+        assert inspect.iscoroutinefunction(my_silver)
+        assert inspect.iscoroutinefunction(score)
+
+
+class TestCallbackAsyncDispatch:
+    """Test async callback dispatch behavior"""
+
+    def test_trigger_callbacks_dispatches_all_registered(self, monkeypatch):
+        registered_callbacks.clear()
+        registered_callbacks.extend(["https://example.com/a", "https://example.com/b"])
+        called_urls = []
+
+        async def fake_invoke(url, event_type, payload):
+            called_urls.append((url, event_type, payload))
+            return {"success": True}
+
+        monkeypatch.setattr(app_module, "invoke_callback", fake_invoke)
+        asyncio.run(trigger_callbacks("price_change", {"xag_usd": 10}))
+
+        assert len(called_urls) == 2
+        assert called_urls[0][1] == "price_change"
+        registered_callbacks.clear()
+
+    def test_invoke_callback_uses_async_http_client(self, monkeypatch):
+        callback_history.clear()
+        captured = {}
+
+        class DummyResponse:
+            status_code = 200
+            is_success = True
+
+        class DummyAsyncClient:
+            def __init__(self, timeout):
+                self.timeout = timeout
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, url, json):
+                captured["url"] = url
+                captured["json"] = json
+                return DummyResponse()
+
+        def fail_requests_post(*args, **kwargs):
+            raise AssertionError("requests.post should not be used for invoke_callback")
+
+        monkeypatch.setattr(app_module.httpx, "AsyncClient", DummyAsyncClient)
+        monkeypatch.setattr(app_module.requests, "post", fail_requests_post)
+
+        result = asyncio.run(invoke_callback("https://example.com/callback", "score_change", {"score": 50}))
+
+        assert result["success"] is True
+        assert captured["url"] == "https://example.com/callback"
+        assert captured["json"]["event"] == "score_change"
 
 
 class TestReleaseEndpoint:
