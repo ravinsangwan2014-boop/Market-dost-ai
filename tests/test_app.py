@@ -4,7 +4,7 @@ Unit tests for Market Dost AI application
 import app as app_module
 import pytest
 from fastapi.testclient import TestClient
-from app import app, registered_callbacks, callback_history, callback_state_lock
+from app import app, registered_callbacks, registered_callback_events, callback_history, callback_state_lock
 
 client = TestClient(app)
 
@@ -13,10 +13,12 @@ client = TestClient(app)
 def reset_callback_state():
     with callback_state_lock:
         registered_callbacks.clear()
+        registered_callback_events.clear()
         callback_history.clear()
     yield
     with callback_state_lock:
         registered_callbacks.clear()
+        registered_callback_events.clear()
         callback_history.clear()
 
 
