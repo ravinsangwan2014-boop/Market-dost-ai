@@ -114,6 +114,8 @@ async def trigger_callbacks(event_type: str, payload: dict):
 def trigger_callbacks_sync(event_type: str, payload: dict):
     """Trigger all registered callbacks from a worker thread"""
     callbacks = get_registered_callbacks()
+    if not callbacks:
+        return
     with ThreadPoolExecutor(max_workers=len(callbacks)) as executor:
         results = list(
             executor.map(
@@ -243,12 +245,13 @@ def providers_status():
 def register_callback(callback: CallbackRequest):
     """Register a callback URL for market events"""
     with callback_state_lock:
+        already_registered = callback.url in registered_callbacks
         if callback.url not in registered_callbacks:
             registered_callbacks.append(callback.url)
             logger.info(f"Callback registered: {callback.url}")
         total_callbacks = len(registered_callbacks)
     return {
-        "message": "Callback registered",
+        "message": "Callback already registered" if already_registered else "Callback registered",
         "url": callback.url,
         "events": callback.events,
         "total_callbacks": total_callbacks

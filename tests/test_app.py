@@ -74,6 +74,15 @@ class TestCallbackManagement:
         assert data["message"] == "Callback registered"
         assert data["url"] == test_url
 
+    def test_register_callback_duplicate(self):
+        test_url = "https://example.com/webhook"
+        client.post("/callbacks/register", json={"url": test_url})
+        response = client.post("/callbacks/register", json={"url": test_url})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["message"] == "Callback already registered"
+        assert data["total_callbacks"] == 1
+
     def test_list_callbacks(self):
         response = client.get("/callbacks/list")
         assert response.status_code == 200
@@ -130,6 +139,30 @@ class TestCallbackManagement:
                 "indicative_inr_per_kg": 89861.34,
             },
         )]
+
+    def test_score_schedules_callbacks_without_running_loop(self, monkeypatch):
+        calls = []
+
+        def fake_trigger(event_type, payload):
+            calls.append((event_type, payload))
+
+        class ImmediateThread:
+            def __init__(self, target=None, args=(), kwargs=None, daemon=None):
+                self.target = target
+                self.args = args
+                self.kwargs = kwargs or {}
+
+            def start(self):
+                self.target(*self.args, **self.kwargs)
+
+        registered_callbacks.append("https://example.com/webhook")
+        monkeypatch.setattr(app_module, "trigger_callbacks_sync", fake_trigger)
+        monkeypatch.setattr(app_module.threading, "Thread", ImmediateThread)
+
+        response = client.get("/score")
+
+        assert response.status_code == 200
+        assert calls == [("score_change", response.json())]
 
 
 class TestMarketDataEndpoints:
