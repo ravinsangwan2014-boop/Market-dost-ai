@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    container_name: market-dost-api
+    ports:
+      - "8080:8080"
+    environment:
+      TWELVE_DATA_API_KEY: ${TWELVE_DATA_API_KEY}
+      TRADING_ECONOMICS_API_KEY: ${TRADING_ECONOMICS_API_KEY}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      SILVER_KG: ${SILVER_KG:-28}
+      SILVER_AVG_COST_INR_PER_KG: ${SILVER_AVG_COST_INR_PER_KG:-171000}
+      TIMEZONE: ${TIMEZONE:-Asia/Kolkata}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  worker:
+    build: .
+    container_name: market-dost-worker
+    command: python worker.py
+    environment:
+      TRADING_ECONOMICS_API_KEY: ${TRADING_ECONOMICS_API_KEY}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      WATCHER_INTERVAL_MINUTES: ${WATCHER_INTERVAL_MINUTES:-5}
+      ECONOMIC_CALENDAR_MIN_IMPORTANCE: ${ECONOMIC_CALENDAR_MIN_IMPORTANCE:-2}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
