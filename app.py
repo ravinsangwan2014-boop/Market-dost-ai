@@ -181,7 +181,7 @@ def _run_callback_dispatch(event_type: str, payload: dict, callback_urls: List[s
 def schedule_callback_dispatch(event_type: str, payload: dict, callback_urls: Optional[List[str]] = None):
     """Schedule callback dispatch with event-loop fallback."""
     if callback_urls is None:
-        callback_urls = list(registered_callbacks)
+        raise ValueError("callback_urls snapshot is required")
     if not callback_urls:
         return
 
@@ -446,10 +446,11 @@ async def telegram_webhook(request: Request):
                 reply = str(providers_status())
             
             async with httpx.AsyncClient(timeout=12.0) as client:
-                await client.post(
+                response = await client.post(
                     f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
                     json={"chat_id": chat_id, "text": reply}
                 )
+                response.raise_for_status()
         return {"ok": True}
     except Exception as e:
         logger.error(f"Error in telegram webhook: {str(e)}")

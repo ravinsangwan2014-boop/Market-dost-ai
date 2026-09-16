@@ -186,7 +186,15 @@ class TestTelegramEndpoints:
 
             async def post(self, url, json):
                 self.post_calls.append((url, json))
-                return type("Resp", (), {"ok": True, "status_code": 200})()
+                return type(
+                    "Resp",
+                    (),
+                    {
+                        "ok": True,
+                        "status_code": 200,
+                        "raise_for_status": lambda self: None,
+                    },
+                )()
 
         dummy_client = DummyAsyncClient()
         monkeypatch.setattr(app_module, "silver", fake_silver)
