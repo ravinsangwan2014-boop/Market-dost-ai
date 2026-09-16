@@ -193,7 +193,7 @@ def schedule_callback_dispatch(event_type: str, payload: dict, callback_urls: Li
     thread = threading.Thread(
         target=_run_callback_dispatch,
         args=(event_type, payload, callback_urls),
-        daemon=True
+        daemon=False
     )
     thread.start()
 
@@ -248,12 +248,14 @@ def providers_status():
 async def register_callback(callback: CallbackRequest):
     """Register a callback URL for market events"""
     async with callback_state_lock:
+        created = False
         if callback.url not in registered_callbacks:
             registered_callbacks.append(callback.url)
             logger.info(f"Callback registered: {callback.url}")
+            created = True
         total_callbacks = len(registered_callbacks)
     return {
-        "message": "Callback registered",
+        "message": "Callback registered" if created else "Callback already registered",
         "url": callback.url,
         "events": callback.events,
         "total_callbacks": total_callbacks
@@ -261,8 +263,18 @@ async def register_callback(callback: CallbackRequest):
 
 
 @app.post("/callbacks/unregister")
-async def unregister_callback(url: str):
+async def unregister_callback(request: Request, url: Optional[str] = None):
     """Unregister a callback URL"""
+    if not url:
+        try:
+            body = await request.json()
+            url = body.get("url")
+        except Exception:
+            url = None
+
+    if not url:
+        return {"message": "Callback not found", "url": url}
+
     async with callback_state_lock:
         if url in registered_callbacks:
             registered_callbacks.remove(url)

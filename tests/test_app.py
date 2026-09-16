@@ -92,6 +92,13 @@ class TestCallbackManagement:
         data = response.json()
         assert data["message"] == "Callback unregistered"
 
+    def test_unregister_callback_from_body(self):
+        test_url = "https://example.com/body-webhook"
+        client.post("/callbacks/register", json={"url": test_url})
+        response = client.post("/callbacks/unregister", json={"url": test_url})
+        assert response.status_code == 200
+        assert response.json()["message"] == "Callback unregistered"
+
     def test_callback_history(self):
         response = client.get("/callbacks/history")
         assert response.status_code == 200
@@ -330,7 +337,7 @@ class TestAsyncScheduling:
         assert seen["url"] == "https://example.com/webhook"
         assert seen["event_type"] == "price_change"
         assert seen["payload"]["xag_usd"] == 30.0
-        assert seen["daemon"] is True
+        assert seen["daemon"] is False
 
     def test_register_callback_waits_on_state_lock(self):
         async def run_test():
