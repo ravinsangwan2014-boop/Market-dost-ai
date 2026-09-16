@@ -106,15 +106,8 @@ async def trigger_callbacks(event_type: str, payload: dict, callback_urls: Optio
         async with callback_state_lock:
             callback_urls = list(registered_callbacks)
 
-    tasks = []
-    for callback_url in callback_urls:
-        task = asyncio.create_task(
-            invoke_callback(callback_url, event_type, payload)
-        )
-        tasks.append(task)
-    
-    if tasks:
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+    if callback_urls:
+        results = await _dispatch_callbacks_without_loop_lock(event_type, payload, callback_urls)
         logger.info(f"Triggered {len(results)} callbacks for event: {event_type}")
 
 
