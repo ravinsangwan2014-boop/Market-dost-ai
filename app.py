@@ -194,7 +194,7 @@ def schedule_callback_dispatch(event_type: str, payload: dict, callback_urls: Li
     thread = threading.Thread(
         target=_run_callback_dispatch,
         args=(event_type, payload, callback_urls),
-        daemon=False
+        daemon=True
     )
     thread.start()
 
