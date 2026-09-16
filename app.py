@@ -164,7 +164,8 @@ async def _dispatch_callbacks_without_loop_lock(event_type: str, payload: dict, 
             )
         )
     if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
+        return await asyncio.gather(*tasks, return_exceptions=True)
+    return []
 
 
 def _run_callback_dispatch(event_type: str, payload: dict, callback_urls: List[str]):

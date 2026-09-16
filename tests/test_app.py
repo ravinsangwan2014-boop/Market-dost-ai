@@ -340,6 +340,33 @@ class TestAsyncScheduling:
         assert seen["payload"]["score"] == 50
         assert seen["callback_urls"] == ["https://example.com/loop"]
 
+    def test_trigger_callbacks_uses_shared_dispatch_results(self, monkeypatch):
+        seen = {}
+
+        async def fake_dispatch(event_type, payload, callback_urls):
+            seen["event_type"] = event_type
+            seen["payload"] = payload
+            seen["callback_urls"] = callback_urls
+            return [{"success": True}]
+
+        monkeypatch.setattr(
+            app_module,
+            "_dispatch_callbacks_without_loop_lock",
+            fake_dispatch,
+        )
+
+        asyncio.run(
+            app_module.trigger_callbacks(
+                "price_change",
+                {"xag_usd": 31.0},
+                ["https://example.com/shared"],
+            )
+        )
+
+        assert seen["event_type"] == "price_change"
+        assert seen["payload"]["xag_usd"] == 31.0
+        assert seen["callback_urls"] == ["https://example.com/shared"]
+
     def test_schedule_callback_dispatch_without_running_loop(self, monkeypatch):
         seen = {}
 
