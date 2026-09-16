@@ -166,9 +166,10 @@ class TestCallbackAsyncDispatch:
             async def __aexit__(self, exc_type, exc, tb):
                 return False
 
-            async def post(self, url, json):
+            async def post(self, url, json, timeout=None):
                 captured["url"] = url
                 captured["json"] = json
+                captured["timeout"] = timeout
                 return DummyResponse()
 
         def fail_requests_post(*args, **kwargs):
@@ -182,6 +183,7 @@ class TestCallbackAsyncDispatch:
         assert result["success"] is True
         assert captured["url"] == "https://example.com/callback"
         assert captured["json"]["event"] == "score_change"
+        assert captured["timeout"] == 12.0
 
 
 class TestReleaseEndpoint:

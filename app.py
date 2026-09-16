@@ -122,7 +122,7 @@ async def invoke_callback(url: str, event_type: str, payload: dict):
     
     try:
         async with httpx.AsyncClient(timeout=12.0) as client:
-            response = await client.post(url, json=callback_payload)
+            response = await client.post(url, json=callback_payload, timeout=12.0)
         result = {
             "callback_url": url,
             "event": event_type,
@@ -397,7 +397,8 @@ async def telegram_webhook(request: Request):
             async with httpx.AsyncClient(timeout=12.0) as client:
                 await client.post(
                     f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-                    json={"chat_id": chat_id, "text": reply}
+                    json={"chat_id": chat_id, "text": reply},
+                    timeout=12.0
                 )
         return {"ok": True}
     except Exception as e:
