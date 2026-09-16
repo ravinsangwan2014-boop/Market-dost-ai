@@ -1,4 +1,5 @@
 import os, time, requests, asyncio, threading
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from typing import List, Optional
@@ -112,10 +113,14 @@ async def trigger_callbacks(event_type: str, payload: dict):
 
 def trigger_callbacks_sync(event_type: str, payload: dict):
     """Trigger all registered callbacks from a worker thread"""
-    results = [
-        invoke_callback_sync(callback_url, event_type, payload)
-        for callback_url in get_registered_callbacks()
-    ]
+    callbacks = get_registered_callbacks()
+    with ThreadPoolExecutor(max_workers=len(callbacks)) as executor:
+        results = list(
+            executor.map(
+                lambda callback_url: invoke_callback_sync(callback_url, event_type, payload),
+                callbacks
+            )
+        )
     if results:
         logger.info(f"Triggered {len(results)} callbacks for event: {event_type}")
 
