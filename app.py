@@ -156,15 +156,25 @@ async def invoke_callback(
 
 async def _dispatch_callbacks_without_loop_lock(event_type: str, payload: dict, callback_urls: List[str]):
     """Dispatch callbacks without touching event-loop-bound locks."""
-    tasks = []
-    for callback_url in callback_urls:
-        tasks.append(
-            asyncio.create_task(
-                invoke_callback(callback_url, event_type, payload)
-            )
-        )
+    tasks = [invoke_callback(callback_url, event_type, payload) for callback_url in callback_urls]
     if tasks:
-        return await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        normalized_results = []
+        for callback_url, result in zip(callback_urls, results):
+            if isinstance(result, Exception):
+                normalized_results.append(
+                    {
+                        "callback_url": callback_url,
+                        "event": event_type,
+                        "status": "error",
+                        "success": False,
+                        "error": type(result).__name__,
+                        "timestamp": datetime.utcnow().isoformat(),
+                    }
+                )
+            else:
+                normalized_results.append(result)
+        return normalized_results
     return []
 
 

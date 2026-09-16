@@ -367,6 +367,26 @@ class TestAsyncScheduling:
         assert seen["payload"]["xag_usd"] == 31.0
         assert seen["callback_urls"] == ["https://example.com/shared"]
 
+    def test_dispatch_callbacks_normalizes_unexpected_exceptions(self, monkeypatch):
+        async def fake_invoke_callback(url, event_type, payload):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(app_module, "invoke_callback", fake_invoke_callback)
+
+        results = asyncio.run(
+            app_module._dispatch_callbacks_without_loop_lock(
+                "price_change",
+                {"xag_usd": 31.0},
+                ["https://example.com/failing"],
+            )
+        )
+
+        assert results[0]["callback_url"] == "https://example.com/failing"
+        assert results[0]["event"] == "price_change"
+        assert results[0]["status"] == "error"
+        assert results[0]["success"] is False
+        assert results[0]["error"] == "RuntimeError"
+
     def test_schedule_callback_dispatch_without_running_loop(self, monkeypatch):
         seen = {}
 
