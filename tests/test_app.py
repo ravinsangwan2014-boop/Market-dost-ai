@@ -133,24 +133,29 @@ class TestCallbackAsyncDispatch:
     """Test async callback dispatch behavior"""
 
     def test_trigger_callbacks_dispatches_all_registered(self, monkeypatch):
-        registered_callbacks.clear()
-        registered_callbacks.extend(["https://example.com/a", "https://example.com/b"])
+        original_callbacks = list(registered_callbacks)
         called_urls = []
+        try:
+            registered_callbacks.clear()
+            registered_callbacks.extend(["https://example.com/a", "https://example.com/b"])
 
-        async def fake_invoke(url, event_type, payload):
-            called_urls.append((url, event_type, payload))
-            return {"success": True}
+            async def fake_invoke(url, event_type, payload):
+                called_urls.append((url, event_type, payload))
+                return {"success": True}
 
-        monkeypatch.setattr(app_module, "invoke_callback", fake_invoke)
-        asyncio.run(trigger_callbacks("price_change", {"xag_usd": 10}))
+            monkeypatch.setattr(app_module, "invoke_callback", fake_invoke)
+            asyncio.run(trigger_callbacks("price_change", {"xag_usd": 10}))
 
-        assert len(called_urls) == 2
-        assert called_urls[0][1] == "price_change"
-        registered_callbacks.clear()
+            assert len(called_urls) == 2
+            assert called_urls[0][1] == "price_change"
+        finally:
+            registered_callbacks.clear()
+            registered_callbacks.extend(original_callbacks)
 
     def test_invoke_callback_uses_async_http_client(self, monkeypatch):
-        callback_history.clear()
+        original_history = list(callback_history)
         captured = {}
+        callback_history.clear()
 
         class DummyResponse:
             status_code = 200
@@ -178,12 +183,16 @@ class TestCallbackAsyncDispatch:
         monkeypatch.setattr(app_module.httpx, "AsyncClient", DummyAsyncClient)
         monkeypatch.setattr(app_module.requests, "post", fail_requests_post)
 
-        result = asyncio.run(invoke_callback("https://example.com/callback", "score_change", {"score": 50}))
+        try:
+            result = asyncio.run(invoke_callback("https://example.com/callback", "score_change", {"score": 50}))
 
-        assert result["success"] is True
-        assert captured["url"] == "https://example.com/callback"
-        assert captured["json"]["event"] == "score_change"
-        assert captured["timeout"] == 12.0
+            assert result["success"] is True
+            assert captured["url"] == "https://example.com/callback"
+            assert captured["json"]["event"] == "score_change"
+            assert captured["timeout"] == 12.0
+        finally:
+            callback_history.clear()
+            callback_history.extend(original_history)
 
 
 class TestReleaseEndpoint:
@@ -223,6 +232,52 @@ class TestTelegramEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["ok"] is True
+
+    def test_telegram_webhook_score_command_uses_async_handler(self, monkeypatch):
+        sent = {}
+
+        class DummyAsyncClient:
+            def __init__(self, timeout):
+                self.timeout = timeout
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, url, json, timeout=None):
+                sent["url"] = url
+                sent["json"] = json
+                sent["timeout"] = timeout
+
+                class DummyResponse:
+                    status_code = 200
+                    is_success = True
+
+                return DummyResponse()
+
+        async def fake_score():
+            return {"score": 50, "bias": "Neutral", "confidence": "LOW", "reasons": []}
+
+        monkeypatch.setattr(app_module, "score", fake_score)
+        monkeypatch.setattr(app_module, "TG_TOKEN", "test-token")
+        monkeypatch.setattr(app_module.httpx, "AsyncClient", DummyAsyncClient)
+
+        response = client.post(
+            "/telegram/webhook",
+            json={
+                "message": {
+                    "text": "/score",
+                    "chat": {"id": 12345}
+                }
+            }
+        )
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        assert sent["url"].endswith("/bottest-token/sendMessage")
+        assert "'score': 50" in sent["json"]["text"]
+        assert sent["timeout"] == 12.0
 
 
 class TestErrorHandling:

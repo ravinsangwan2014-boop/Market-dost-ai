@@ -237,8 +237,9 @@ def list_callbacks():
 @app.get("/callbacks/history")
 def get_callback_history(limit: int = 50):
     """Get callback invocation history"""
+    limit = max(limit, 0)
     with callback_state_lock:
-        history = callback_history[-limit:]
+        history = callback_history[-limit:] if limit else []
         total = len(callback_history)
     return {
         "history": history,
