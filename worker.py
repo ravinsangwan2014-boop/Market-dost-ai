@@ -20,6 +20,13 @@ def env_int(name, default):
         return default
 
 
+def safe_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def load_config():
     interval = max(60, env_int("WATCHER_INTERVAL_MINUTES", 5) * 60)
     mode = (os.getenv("CALENDAR_MODE", "trading_economics") or "trading_economics").strip().lower()
@@ -96,9 +103,13 @@ def get_google_access_token(config):
 def fetch_google_calendar(config):
     calendar_id = config["google_calendar_id"] or "primary"
     now = datetime.now(timezone.utc)
-    fetch_lookback_minutes = max(0, config["google_calendar_lookback_minutes"], config["google_alert_lookback_minutes"])
+    calendar_lookback_minutes = max(0, safe_int(config["google_calendar_lookback_minutes"], 0))
+    alert_lookback_minutes = max(0, safe_int(config["google_alert_lookback_minutes"], 0))
+    calendar_lookahead_minutes = max(1, safe_int(config["google_calendar_lookahead_minutes"], 180))
+    alert_lead_minutes = max(1, safe_int(config["google_alert_lead_minutes"], 30))
+    fetch_lookback_minutes = max(calendar_lookback_minutes, alert_lookback_minutes)
     time_min = (now - timedelta(minutes=fetch_lookback_minutes)).isoformat()
-    fetch_window_minutes = max(1, config["google_calendar_lookahead_minutes"], config["google_alert_lead_minutes"])
+    fetch_window_minutes = max(calendar_lookahead_minutes, alert_lead_minutes)
     time_max = (now + timedelta(minutes=fetch_window_minutes)).isoformat()
 
     params = {
@@ -216,7 +227,7 @@ def poll_trading_economics(config):
     events = fetch_trading_economics_calendar(config)
     for event in events:
         evaluated += 1
-        importance = int(event.get("Importance") or 0)
+        importance = safe_int(event.get("Importance"), 0)
         actual = event.get("Actual")
         if importance < config["min_importance"]:
             skipped_low_importance += 1

@@ -181,3 +181,24 @@ def test_fetch_google_calendar_uses_oauth_when_api_key_missing(monkeypatch):
     assert token_post["data"]["grant_type"] == "refresh_token"
     assert "key" not in calendar_get["params"]
     assert calendar_get["headers"]["Authorization"].startswith("Bearer ")
+
+
+def test_fetch_google_calendar_skips_when_oauth_token_missing(monkeypatch):
+    config = _base_google_config()
+    config["google_api_key"] = ""
+    config["google_client_id"] = "cid"
+    config["google_client_secret"] = "csecret"
+    config["google_refresh_token"] = "rtoken"
+
+    def fake_post(url, auth=None, data=None, timeout=None):
+        return _FakeResponse({})
+
+    def fail_get(*_args, **_kwargs):
+        raise AssertionError("calendar fetch should not run without access token")
+
+    monkeypatch.setattr(worker.requests, "post", fake_post)
+    monkeypatch.setattr(worker.requests, "get", fail_get)
+
+    events = worker.fetch_google_calendar(config)
+
+    assert events == []
