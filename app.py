@@ -1,5 +1,5 @@
 import os, time, requests, asyncio, threading
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
@@ -31,6 +31,8 @@ TD_KEY = os.getenv("TWELVE_DATA_API_KEY", "")
 TE_KEY = os.getenv("TRADING_ECONOMICS_API_KEY", "")
 TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
+TG_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 
 # Callback storage
 registered_callbacks: List[str] = []
@@ -449,6 +451,10 @@ def telegram_test():
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
     """Telegram webhook receiver for bot commands"""
+    if configured(TG_WEBHOOK_SECRET):
+        supplied = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if supplied != TG_WEBHOOK_SECRET:
+            raise HTTPException(status_code=403, detail="Forbidden")
     try:
         update = await request.json()
         msg = update.get("message") or {}
