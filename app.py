@@ -445,16 +445,19 @@ async def telegram_webhook(request: Request):
         chat_id = (msg.get("chat") or {}).get("id")
         
         if chat_id and configured(TG_TOKEN):
-            reply = "Market Dost AI commands: /silver /mysilver /score /status"
+            reply = "Market Dost AI commands: /silver /gold /mysilver /score /status"
             
             if text == "/silver":
                 reply = str(await silver())
+            elif text == "/gold":
+                gold = await asyncio.to_thread(td_price, "XAU/USD")
+                reply = f"Gold (XAU/USD): {gold}" if gold is not None else "Gold data not confirmed right now."
             elif text == "/mysilver":
                 reply = str(await my_silver())
             elif text == "/score":
                 reply = str(await score())
             elif text in ("/start", "/help"):
-                reply = "Namaste! Market Dost AI ready. Commands: /silver /mysilver /score /status"
+                reply = "Namaste! Market Dost AI ready. Commands: /silver /gold /mysilver /score /status"
             elif text == "/status":
                 reply = str(providers_status())
             
