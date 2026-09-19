@@ -10,7 +10,18 @@ import httpx
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Market Dost AI", version="2.0.0")
+DISCLAIMER = (
+    "⚠️ Disclaimer: Market Dost AI केवल market/economic data और informational analysis share करता है. "
+    "यह investment, trading, buy/sell या financial advice नहीं है. Market में risk और loss संभव है. "
+    "किसी भी financial decision से पहले अपनी research करें और जरूरत हो तो SEBI-registered investment adviser से सलाह लें. "
+    "आपके investment/trading decisions और उनसे होने वाले profit/loss की जिम्मेदारी आपकी स्वयं की होगी."
+)
+
+app = FastAPI(
+    title="Market Dost AI",
+    version="2.0.0",
+    description="Market and economic data for informational purposes only. Not investment advice."
+)
 
 # Configuration
 SILVER_KG = float(os.getenv("SILVER_KG", "28"))
@@ -214,7 +225,7 @@ def schedule_callback_dispatch(event_type: str, payload: dict, callback_urls: Li
 @app.get("/")
 def root():
     """Root endpoint - API status"""
-    return {"name": "Market Dost AI", "version": "2.0.0", "status": "running"}
+    return {"name": "Market Dost AI", "version": "2.0.0", "status": "running", "disclaimer": DISCLAIMER}
 
 
 @app.get("/health/live")
@@ -457,7 +468,7 @@ async def telegram_webhook(request: Request):
             elif text == "/score":
                 reply = str(await score())
             elif text in ("/start", "/help"):
-                reply = "Namaste! Market Dost AI ready. Commands: /silver /gold /mysilver /score /status"
+                reply = "Namaste! Market Dost AI ready. Commands: /silver /gold /mysilver /score /status\n\n" + DISCLAIMER
             elif text == "/status":
                 reply = str(providers_status())
             
